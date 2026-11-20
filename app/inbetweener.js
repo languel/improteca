@@ -6,14 +6,13 @@
 // URL options: ?model=<onnx url> &clips=<bvh url>,<bvh url> &backend=wasm &play
 
 import { Stage, Mannequin } from './stage.js';
-import { fetchModel, openSession } from './model.js';
+import { startEngine, savedChoice } from './engine-client.js';
 import { Skeleton } from '../src/engine/skeleton.js';
 import { parseBVH } from '../src/engine/bvh.js';
 import { bvhToSoma } from '../src/engine/retarget.js';
 import { SomaEngine, SAMPLE_RATE, POSES_PER_TOKEN, MIN_TOKENS, MAX_TOKENS } from '../src/engine/soma.js';
 import { Inbetweener, sampleWindow } from '../src/engine/inbetweener.js';
 import { placement, TF } from '../src/engine/math.js';
-import { ortRunner, MODEL_URLS } from '../src/engine/ort.js';
 
 const params = new URLSearchParams(location.search);
 const $ = (id) => document.getElementById(id);
@@ -82,33 +81,26 @@ async function boot() {
 
 // ---- model -----------------------------------------------------------------
 
-async function loadModel(source) {
+/** Start the model worker. model: 'auto' | 'fp16' | 'int8' | a URL (e.g. a local file's object URL). */
+async function loadModel(model = savedChoice(params).model) {
   const status = $('model-status');
   const bar = $('model-progress');
   bar.parentElement.hidden = false;
   $('load-model').disabled = true;
   try {
-    let bytes;
-    if (source instanceof File) {
-      status.textContent = `Reading ${source.name}…`;
-      bytes = new Uint8Array(await source.arrayBuffer());
-    } else {
-      status.textContent = 'Downloading…';
-      bytes = await fetchModel(source, (f, note) => {
+    status.textContent = 'Starting…';
+    const client = await startEngine({
+      model,
+      backend: savedChoice(params).backend,
+      onProgress: (f, note) => {
         bar.style.width = `${(f * 100).toFixed(1)}%`;
-        status.textContent = note === 'cached' ? 'Loading from cache…' : `Downloading… ${note}`;
-      });
-    }
-    bar.style.width = '100%';
-    status.textContent = 'Starting ONNX Runtime…';
-    const { ort, session, backend } = await openSession(bytes, params.get('backend') || 'webgpu');
-    state.engine = new SomaEngine({
-      skeleton: state.skeleton,
-      modelJointNames: state.modelJointNames,
-      run: ortRunner(ort, session),
+        status.textContent = note === 'cached' ? 'Loading from cache…' : /MB/.test(note) ? `Downloading… ${note}` : note;
+      },
     });
-    state.backend = backend;
-    status.textContent = `Ready on ${backend === 'webgpu' ? 'WebGPU' : 'WebAssembly (CPU)'}.`;
+    state.client = client;
+    state.engine = new SomaEngine({ skeleton: state.skeleton, modelJointNames: state.modelJointNames, run: client.run });
+    state.backend = client.backend;
+    status.textContent = `Ready: ${client.label}.${client.note ? ` ${client.note}` : ''}`;
     window.improteca = { state, ready: true };
   } catch (err) {
     console.error(err);
@@ -453,7 +445,7 @@ async function quickStart() {
         await loadClipUrls(SAMPLES.map((p) => SAMPLES_BASE + p));
       }
     }
-    if (!state.engine) await loadModel(MODEL_URLS.fp16);
+    if (!state.engine) await loadModel();
     if (!state.engine || !state.clips.length) return;
     randomTargets();
     $('loop').checked = true;
@@ -466,8 +458,8 @@ async function quickStart() {
 // ---- UI --------------------------------------------------------------------
 
 function bindUI() {
-  $('load-model').addEventListener('click', () => loadModel(MODEL_URLS.fp16));
-  $('model-file').addEventListener('change', (e) => e.target.files[0] && loadModel(e.target.files[0]));
+  $('load-model').addEventListener('click', () => loadModel());
+  $('model-file').addEventListener('change', (e) => e.target.files[0] && loadModel(URL.createObjectURL(e.target.files[0])));
   $('clip-files').addEventListener('change', async (e) => {
     for (const file of e.target.files) {
       try {
@@ -507,7 +499,7 @@ function updateButtons() {
 
 function renderStats() {
   const rows = [
-    ['Backend', state.backend || '–'],
+    ['Model', state.client?.label || '–'],
     ['Generations', String(state.generations)],
     ['Last generation', state.lastMs ? `${state.lastMs.toFixed(0)} ms` : '–'],
     ['Late handovers', String(state.late)],

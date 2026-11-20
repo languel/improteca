@@ -56,10 +56,25 @@ python3 -m http.server 5310
 ```
 
 Open <http://127.0.0.1:5310/>, write a prompt and press **Dance**. The first run
-downloads the motion model (380 MB from NVIDIA's repository, cached by the
-browser) and learns about 20 clips from the mediathèque. Without WebGPU it
-falls back to WebAssembly on the CPU (about 0.4 s per generation, still ahead
-of playback).
+downloads the motion model and learns about 20 clips from the mediathèque.
+
+**Motion model** (in the page, or `?model=` and `?backend=` in the URL), so the
+options can be compared:
+
+| Model | Size | Notes |
+| --- | --- | --- |
+| `fp16` | 380 MB | NVIDIA's own FP16 file, loaded from NVIDIA's repository |
+| `int8` | 210 MB gzipped | 8-bit build made by `tools/build_int8.py` (CI builds it on deploy) |
+
+`auto` (the default) uses FP16 on WebGPU and 8-bit on WebAssembly. The model
+runs in a Web Worker, so the page stays smooth while it generates. For the
+8-bit build locally: `python tools/build_int8.py --out models/int8`.
+
+## Acknowledgements
+
+The 8-bit model, the Web Worker and streamed gzip parts follow lessons from
+[motionbricks-web](https://github.com/eureka-studio-hq/motionbricks-web) by
+Eureka Studios.
 
 ## Principles
 

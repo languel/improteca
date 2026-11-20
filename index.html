@@ -80,6 +80,19 @@
 
     <section>
       <details>
+        <summary><h2>Motion model</h2></summary>
+        <p class="hint">Compare NVIDIA's FP16 model with improteca's 8-bit build (smaller and faster on CPU; it chooses slightly different but equally valid motion). Auto uses FP16 on WebGPU, 8-bit on WebAssembly.</p>
+        <div class="row">
+          <label class="check">Model <select id="model"><option value="auto">Auto</option><option value="fp16">FP16 · NVIDIA · 380 MB</option><option value="int8">8-bit · 210 MB</option></select></label>
+          <label class="check">Run on <select id="backend"><option value="auto">Auto</option><option value="webgpu">WebGPU</option><option value="wasm">WebAssembly (CPU)</option></select></label>
+          <button id="apply-engine">Apply</button>
+        </div>
+        <p id="engine-stats" class="hint">Not loaded.</p>
+      </details>
+    </section>
+
+    <section>
+      <details>
         <summary><h2>Language model</h2></summary>
         <p class="hint">Prompts are read by a built-in movement vocabulary. For freer language and imagery, use Claude with your own Anthropic API key. The key is sent only to Anthropic.</p>
         <label class="check"><input id="use-llm" type="checkbox"> Use Claude for prompts</label>

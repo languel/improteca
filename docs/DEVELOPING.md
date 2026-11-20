@@ -19,10 +19,13 @@ src/dancer/   the dancer
   intentions.js   prompt -> intentions with a built-in movement vocabulary
   llm.js          prompt -> intentions with Claude (optional, user's own key)
   fit.js          video pose (MediaPipe landmarks) -> SOMA rotations
-app/          the pages: dancer.js (index.html), inbetweener.js, stage, model loading,
+app/          the pages: dancer.js (index.html), inbetweener.js, stage,
+              engine-client.js + model-worker.js (the model in a Web Worker),
               video.js (MediaPipe pose on a film, then fit.js)
 assets/soma/  the SOMA skeleton (names, parents, rest pose)
 reference/    a script that runs NVIDIA's own pipeline on CPU to make test fixtures
+tools/        build_int8.py: the 8-bit browser model (CI runs it on deploy)
+models/       built models served with the site (git-ignored)
 tests/        node --test
 local/        model, clips and fixtures for testing (git-ignored)
 ```
@@ -111,3 +114,14 @@ things, and skip without them:
   in tests. With "repetitive", at least a third of the steps develop motifs;
   "unpredictable" raises the share of new material. A new prompt starts a new
   motif and keeps the old ones.
+- **FP16 versus 8-bit.** The 8-bit build (matrix multiplies only, as in
+  motionbricks-web) does not reproduce FP16's motion: on identical inputs its
+  joints differ by 8-24° on average and it sometimes picks another segment
+  length. It is not worse by the measure that matters: along the same
+  improvised dance its raw output misses the target poses by 13.3° against
+  FP16's 13.2° (test `precision.test.js`), and it hands over no less
+  smoothly. It is 31% smaller and faster: 43 against 64 ms per generation on
+  CPU in Node, 270 against 423 ms in the browser on single-threaded
+  WebAssembly. Not yet measured on WebGPU.
+- **The worker.** With the model on the main thread, 12 s of dancing on
+  WebAssembly had 13 frames over 100 ms (up to 500 ms). In the worker: none.

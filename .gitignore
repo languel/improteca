@@ -3,3 +3,4 @@ node_modules/
 # Model weights and evaluation-only sample data are never committed.
 *.onnx
 local/
+models/

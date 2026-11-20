@@ -43,6 +43,30 @@ jobs:
         run: |
           mkdir -p _site
           cp -r index.html inbetweener.html app src assets LICENSE _site/
+      # The 8-bit model is built from NVIDIA's FP32 file on deploy (never committed),
+      # and cached until NVIDIA's repository or the build script changes.
+      - name: Find NVIDIA's MotionBricks revision
+        id: nvidia
+        run: echo "rev=$(git ls-remote https://github.com/NVlabs/motionbricks HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
+      - name: Restore the 8-bit model
+        id: int8
+        uses: actions/cache@v4
+        with:
+          path: models/int8
+          key: int8-${{ steps.nvidia.outputs.rev }}-${{ hashFiles('tools/build_int8.py') }}
+      - uses: actions/setup-python@v5
+        if: steps.int8.outputs.cache-hit != 'true'
+        with:
+          python-version: '3.12'
+      - name: Build the 8-bit model
+        if: steps.int8.outputs.cache-hit != 'true'
+        run: |
+          pip install onnx onnxruntime
+          python tools/build_int8.py --out models/int8
+      - name: Add the 8-bit model to the site
+        run: |
+          mkdir -p _site/models
+          cp -r models/int8 _site/models/
       # Pages must be enabled once with Source "GitHub Actions"
       # (Settings > Pages); a workflow token cannot turn it on.
       - uses: actions/configure-pages@v5

@@ -5,14 +5,13 @@
 // URL options: ?model=<onnx url> &backend=wasm &prompt=<text> &seed=<n> &autoplay &clips=<id,id>
 
 import { Stage, Mannequin } from './stage.js';
-import { fetchModel, openSession } from './model.js';
+import { startEngine, savedChoice, saveChoice } from './engine-client.js';
 import { Skeleton } from '../src/engine/skeleton.js';
 import { parseBVH } from '../src/engine/bvh.js';
 import { bvhToSoma } from '../src/engine/retarget.js';
 import { SomaEngine, SAMPLE_RATE } from '../src/engine/soma.js';
 import { Inbetweener } from '../src/engine/inbetweener.js';
 import { TF } from '../src/engine/math.js';
-import { ortRunner, MODEL_URLS } from '../src/engine/ort.js';
 import { learn } from '../src/dancer/repertoire.js';
 import { Improviser, rng } from '../src/dancer/improviser.js';
 import { parsePrompt, describeIntentions } from '../src/dancer/intentions.js';
@@ -134,21 +133,37 @@ async function teachFromMediatheque(item) {
   teach({ id: item.id, name: shortTitle(item), text: await res.text(), credit: item.rights?.credit || item.credit || '' });
 }
 
+/** Start (or restart) the model worker with the chosen model and backend. */
+async function loadModel() {
+  const choice = { model: $('model').value, backend: $('backend').value };
+  const client = await startEngine({
+    ...choice,
+    onProgress: (f, note) => {
+      setProgress(f >= 1 ? null : f);
+      setStatus(note === 'cached' ? 'Loading the motion model from cache…' : /MB/.test(note) ? `Downloading the motion model… ${note}` : note);
+    },
+  });
+  setProgress(null);
+  state.client?.terminate();
+  state.client = client;
+  if (state.engine) state.engine.run = client.run; // swap under a running dance
+  else state.engine = new SomaEngine({ skeleton: state.skeleton, modelJointNames: state.modelJointNames, run: client.run });
+  state.backend = client.backend;
+  if (client.note) setStatus(client.note);
+  renderEngine();
+}
+
+function renderEngine() {
+  const c = state.client;
+  $('engine-stats').textContent = c
+    ? `${c.label} · loaded in ${(c.loadMs / 1000).toFixed(1)} s${c.medianMs() ? ` · ${c.medianMs().toFixed(0)} ms per generation (median)` : ''}${state.late ? ` · ${state.late} late handovers` : ''}`
+    : 'Not loaded.';
+}
+
 function loadEverything() {
   if (state.loading) return state.loading;
   state.loading = (async () => {
-    const modelUrl = params.get('model') || MODEL_URLS.fp16;
-    const modelPromise = (async () => {
-      const bytes = await fetchModel(modelUrl, (f, note) => {
-        setProgress(f);
-        setStatus(note === 'cached' ? 'Loading the motion model from cache…' : `Downloading the motion model… ${note} of 380 MB`);
-      });
-      setProgress(null);
-      setStatus('Starting the motion model…');
-      const { ort, session, backend } = await openSession(bytes, params.get('backend') || 'webgpu');
-      state.engine = new SomaEngine({ skeleton: state.skeleton, modelJointNames: state.modelJointNames, run: ortRunner(ort, session) });
-      state.backend = backend;
-    })();
+    const modelPromise = loadModel();
     // Learn clips while the model downloads.
     const items = await loadCatalog();
     const wanted = (params.get('clips')?.split(',') || DEFAULT_CLIPS).map((id) => items.find((i) => i.id === id)).filter(Boolean);
@@ -168,7 +183,7 @@ function loadEverything() {
       readyForStart();
     })();
     await Promise.all([modelPromise, enough]);
-    setStatus(`Ready on ${state.backend === 'webgpu' ? 'WebGPU' : 'WebAssembly (CPU, slower)'}.`);
+    setStatus(`Ready: ${state.client.label}.`);
   })();
   state.loading.catch((err) => {
     console.error(err);
@@ -223,7 +238,7 @@ async function dance() {
       // Respond within one movement: drop planned targets not yet generated.
       state.pending = [];
     }
-    setStatus(`Dancing on ${state.backend === 'webgpu' ? 'WebGPU' : 'WebAssembly (CPU)'} · ${state.movements} movements learned.`);
+    setStatus(`Dancing · ${state.client.label} · ${state.movements} movements learned.`);
   } catch (err) {
     console.error(err);
     setStatus(`Could not start: ${err.message || err}`);
@@ -519,6 +534,25 @@ function bindUI() {
     $('examples').append(b);
   }
   $('dance').addEventListener('click', dance);
+  const choice = savedChoice(params);
+  for (const [id, value] of [['model', choice.model], ['backend', choice.backend]]) {
+    if (![...$(id).options].some((o) => o.value === value)) $(id).add(new Option(value, value));
+    $(id).value = value;
+  }
+  $('apply-engine').addEventListener('click', async () => {
+    saveChoice({ model: $('model').value, backend: $('backend').value });
+    if (!state.client) return setStatus('Saved: used when the dancer starts.');
+    $('apply-engine').disabled = true;
+    try {
+      await loadModel();
+      setStatus(`Switched to ${state.client.label}.`);
+    } catch (err) {
+      setStatus(`Could not switch: ${err.message || err}`);
+    } finally {
+      $('apply-engine').disabled = false;
+    }
+  });
+  setInterval(renderEngine, 1000);
   $('prompt').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) dance();
   });

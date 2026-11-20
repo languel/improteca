@@ -162,3 +162,4 @@ h3 { font-size: 13px; margin: 14px 0 6px; }
 .form span { white-space: nowrap; }
 .form .current { color: var(--accent); font-weight: 600; }
 .now .phrase { display: inline-block; font-size: 12px; font-weight: 600; color: var(--accent); margin-right: 6px; }
+select { font: inherit; font-size: 13px; color: var(--text); background: var(--field); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; max-width: 100%; }
