@@ -155,7 +155,15 @@ export function rotationBetweenFrames(a1, a2, b1, b2) {
     const d = v[0] * n[0] + v[1] * n[1] + v[2] * n[2];
     return [v[0] - d * n[0], v[1] - d * n[1], v[2] - d * n[2]];
   };
-  const q2 = rotationBetween(proj(a2r), proj(b2));
+  const pa = proj(a2r);
+  const pb = proj(b2);
+  // Opposite secondaries need a half turn about b1 itself (rotationBetween
+  // would pick an arbitrary axis and move b1 too).
+  const la = Math.hypot(...pa);
+  const lb = Math.hypot(...pb);
+  const q2 = la > 1e-9 && lb > 1e-9 && (pa[0] * pb[0] + pa[1] * pb[1] + pa[2] * pb[2]) / (la * lb) < -0.999999
+    ? [n[0], n[1], n[2], 0]
+    : rotationBetween(pa, pb);
   return qmul(q2, q1);
 }
 

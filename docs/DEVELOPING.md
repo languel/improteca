@@ -139,8 +139,18 @@ things, and skip without them:
   (`audit.js`), from raw output to output with the default constraints:
   elbows/knees off their hinge in 26% of frames -> 0; over-bent or
   hyperextended 1.9% -> 0; feet sliding while marked in contact 59% of
-  contact frames -> 32%; nothing below the floor. Handover smoothing (a
-  velocity offset that fades over 6 frames) brings the worst handover from
-  3.0x to 1.9x the motion's 99th-percentile acceleration, with no joint
-  faster than about 15 rad/s. Balance is optional (off by default): it
-  slightly increases foot sliding.
+  contact frames -> 48%; nothing below the floor. Balance is optional (off
+  by default): it slightly increases foot sliding.
+- **Pops at the end of a move.** Three causes, found and fixed:
+  (1) corrections were applied twice at a handover (the new segment already
+  starts from the corrected body), so they are re-based to zero there;
+  (2) a limb solve hit an exact half turn in `rotationBetweenFrames`, which
+  then rotated about an arbitrary axis and swung the arm for two frames
+  (17 rad/s; regression test in `retarget.test.js`); (3) the model sometimes
+  reverses a limb's direction right at a join. Handover smoothing (a
+  velocity offset that fades over 10 frames, up to 0.35 rad per frame) now
+  brings the worst handover on the CMU chain from 3.0x (raw) to 1.34x the
+  motion's 99th-percentile acceleration; no joint faster than 14 rad/s, and
+  position jitter near handovers 7.2 mm/frame² (raw 7.9). Foot planting is
+  smoothed (contact held for a few frames, critically damped spring) so a
+  planted foot does not snap.

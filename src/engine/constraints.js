@@ -22,7 +22,7 @@
 // from, so the model continues from the corrected body.
 
 import { TF, getTf, setTf, tf, tp, tq, qmul, qinv, qnormalize, qToAxisAngle, qFromAxisAngle } from './math.js';
-import { LIMBS, limbInfo, solveLimb, ikDirections, HINGE_RANGE } from './limbs.js';
+import { LIMBS, limbInfo, solveLimb, ikDirections, hingeAngle, HINGE_RANGE } from './limbs.js';
 
 const DEG = Math.PI / 180;
 /** Largest rotation from rest (degrees) for joints without a hinge. */
@@ -36,7 +36,7 @@ const FLOOR_CLEARANCE = { LeftToeBase: 0.015, RightToeBase: 0.015, LeftFoot: 0.0
 // Rough segment masses for the centre of mass (fractions of body mass, at joints).
 const MASS = { Hips: 0.14, Spine2: 0.16, Chest: 0.2, Head: 0.08, LeftArm: 0.03, RightArm: 0.03, LeftForeArm: 0.02, RightForeArm: 0.02, LeftHand: 0.01, RightHand: 0.01, LeftLeg: 0.1, RightLeg: 0.1, LeftShin: 0.045, RightShin: 0.045, LeftFoot: 0.015, RightFoot: 0.015 };
 
-const HANDOVER_FRAMES = 6;
+const HANDOVER_FRAMES = 10;
 
 /** Per joint: rotation vector from pose a to pose b (b relative to a, local), and root velocity. */
 function velocity(a, b) {
@@ -127,7 +127,16 @@ export function applyJointLimits(skeleton, local, strength = 1, cache = {}) {
   world = skeleton.world(local);
   cache.limbs.forEach((info, i) => {
     const before = [info.u, info.m, info.e].map((j) => tq(getTf(local, j)));
+    const inputAngle = hingeAngle(info, local);
     const r = solveLimb(skeleton, info, local, world, dirs[i][0], dirs[i][1], { prevNormal: cache.normals[i] });
+    // Fail safe: a solve that would force a large clamp on a limb whose own
+    // bend was already in range is a geometric corner case; keep the input
+    // limb for this frame rather than swing the arm or leg.
+    if (r.outBy > 0.35 && inputAngle > HINGE_RANGE[0] - 0.05 && inputAngle < HINGE_RANGE[1] + 0.05) {
+      [info.u, info.m, info.e].forEach((j, k) => setTf(local, j, tf(tp(getTf(local, j)), before[k])));
+      world = skeleton.world(local);
+      return;
+    }
     cache.normals[i] = r.normal;
     if (r.clamped) (n++, cache.changed.push(info.m));
     if (strength < 1) {
@@ -189,22 +198,48 @@ export class Constraints {
     // Handover: the velocity the body had minus the velocity the new segment
     // starts with, added as an offset that starts at zero and fades out
     // (dv * t * (1 - t/T)^2), so position and velocity are both continuous.
-    // Velocities are compared on the model's raw frames on both sides, so the
-    // corrections themselves are not mistaken for motion.
+    // A new segment starts from the corrected body (its context was the
+    // corrected frames), so the model's output already includes the
+    // corrections made so far: re-base them to zero here, or they would be
+    // applied twice (a pop at every handover). Planted feet keep their anchor.
     const activity = [];
     let dv = null;
-    if (from > 0 && this.rawLast && this.rawBeforeLast && this.settings.smooth > 0 && to >= from + 1) {
-      const before = velocity(this.rawBeforeLast, this.rawLast);
-      const after = velocity(poses.subarray(from * J * TF, (from + 1) * J * TF), poses.subarray((from + 1) * J * TF, (from + 2) * J * TF));
-      dv = before.map((x, i) => (x - after[i]) * this.settings.smooth);
+    if (from > 0) {
+      for (const leg of this.legs) {
+        leg.offset = [0, 0, 0];
+        leg.vel = [0, 0, 0];
+      }
+      this.lift = 0;
+      // Handover velocity: what was shown, against how the new segment leaves
+      // the last shown pose (its frame from-1 is that pose).
+      if (this.shownLast && this.shownBeforeLast && this.settings.smooth > 0 && to >= from) {
+        const before = velocity(this.shownBeforeLast, this.shownLast);
+        // Compare corrected with corrected: the new frame gets the joint limits
+        // (on a copy, with a copy of the hinge state) so removing a raw elbow
+        // twist is not mistaken for motion.
+        const next = Float64Array.from(poses.subarray(from * J * TF, (from + 1) * J * TF));
+        if (this.settings.limits > 0) {
+          const c = this.cache;
+          applyJointLimits(this.sk, next, this.settings.limits, { limbs: c.limbs, inner: c.inner, ends: c.ends, normals: [...c.normals], prev: { ...c.prev } });
+        }
+        const after = velocity(poses.subarray((from - 1) * J * TF, from * J * TF), next);
+        // At most 0.35 rad (and 3 cm) per frame of correction, per joint: enough
+        // to ease a limb that reverses direction at the join.
+        dv = before.map((x, i) => (x - after[i]) * this.settings.smooth);
+        for (let j = 0; j < dv.length / 3; j++) {
+          const m = Math.hypot(dv[j * 3], dv[j * 3 + 1], dv[j * 3 + 2]);
+          const cap = j === dv.length / 3 - 1 ? 0.03 : 0.35;
+          if (m > cap) for (let i = 0; i < 3; i++) dv[j * 3 + i] *= cap / m;
+        }
+      }
     }
     for (let f = from; f <= to; f++) {
       const local = poses.subarray(f * J * TF, (f + 1) * J * TF);
-      this.rawBeforeLast = this.rawLast;
-      this.rawLast = Float64Array.from(local);
       const k = f - from + 1;
       if (dv && k <= HANDOVER_FRAMES) addVelocity(local, dv, k * (1 - k / (HANDOVER_FRAMES + 1)) ** 2);
       activity.push(this.frame(local, contacts ? contacts.subarray(f * 4, f * 4 + 4) : null));
+      this.shownBeforeLast = this.shownLast;
+      this.shownLast = Float64Array.from(local);
     }
     return activity;
   }
@@ -259,9 +294,10 @@ export class Constraints {
     }
 
     // Feet: plant the part in contact (heel: the ankle; toe only: the toe, the
-    // foot pivoting on it). The correction moves smoothly and at most 1.5 cm
-    // per frame, a foot is only planted when nearly still, and it lets go when
-    // the body has moved too far from it, so the leg never snaps.
+    // foot pivoting on it). The contact signal is smoothed and needs to hold
+    // for a few frames; a planted foot keeps its anchor through a heel-toe
+    // roll; the correction follows a critically damped spring (no sudden
+    // accelerations); a foot lets go when the body has moved too far from it.
     if (S.feet > 0) {
       for (const leg of this.legs) {
         const P = (j) => [world[j * TF], world[j * TF + 1], world[j * TF + 2]];
@@ -269,44 +305,60 @@ export class Constraints {
         const toePos = P(leg.toeJ);
         const speed = leg.lastAnkle ? Math.hypot(ankle[0] - leg.lastAnkle[0], ankle[2] - leg.lastAnkle[2]) * 30 : 0;
         leg.lastAnkle = ankle;
+        // Where the knee points, tracked every frame (smoothed, kept on the
+        // same side; a nearly straight knee's direction is noise and would
+        // flip the bend plane (and twist the thigh).
+        const hipNow = P(leg.info.u);
+        const kneeNow = P(leg.info.m);
+        const bend = [0, 1, 2].map((i) => kneeNow[i] - (hipNow[i] + ankle[i]) / 2);
+        const bl = Math.hypot(...bend);
+        if (!leg.side) leg.side = bl > 1e-6 ? bend.map((x) => x / bl) : [0, 0, 1];
+        else if (bl > 0.04) {
+          let cur = bend.map((x) => x / bl);
+          if (cur[0] * leg.side[0] + cur[1] * leg.side[1] + cur[2] * leg.side[2] < 0 && bl < 0.08) cur = cur.map((x) => -x);
+          const mix = leg.side.map((x, i) => x * 0.7 + cur[i] * 0.3);
+          const ml = Math.hypot(...mix);
+          if (ml > 1e-6) leg.side = mix.map((x) => x / ml);
+        }
         let desired = [0, 0, 0];
         if (contact) {
-          const heel = contact[leg.heel];
-          const toe = contact[leg.toe];
-          const p = Math.max(heel, toe);
-          const mode = heel >= toe ? 'heel' : 'toe';
-          if (p < 0.4) leg.lock = null;
-          else if (p > 0.6 && (!leg.lock || leg.lock.mode !== mode) && speed < 0.6) {
-            // Plant (or roll heel-to-toe) where the part is now, including the current correction.
+          const raw = Math.max(contact[leg.heel], contact[leg.toe]);
+          leg.p = leg.p === undefined ? raw : leg.p + (raw - leg.p) * 0.35; // smoothed contact
+          leg.held = (leg.held || 0) + 1;
+          if (leg.lock && leg.p < 0.3 && leg.held >= 6) {
+            leg.lock = null;
+            leg.held = 0;
+          } else if (!leg.lock && leg.p > 0.7 && speed < 0.6 && leg.held >= 3) {
+            const mode = contact[leg.heel] >= contact[leg.toe] ? 'heel' : 'toe';
             const at = mode === 'heel' ? ankle : toePos;
             leg.lock = { mode, at: at.map((x, k) => x + (leg.offset?.[k] || 0)) };
+            leg.held = 0;
           }
           if (leg.lock) {
             const want = leg.lock.mode === 'heel' ? leg.lock.at : leg.lock.at.map((x, k) => x - (toePos[k] - ankle[k]));
             desired = want.map((x, k) => x - ankle[k]);
             if (Math.hypot(...desired) > 0.15) {
               leg.lock = null; // the body has moved on: let the foot go
+              leg.held = 0;
               desired = [0, 0, 0];
             }
           }
         }
         desired = desired.map((x) => x * S.feet);
+        // Critically damped spring toward the desired correction.
         leg.offset ??= [0, 0, 0];
-        const step = desired.map((x, k) => (x - leg.offset[k]) * 0.5);
-        const len = Math.hypot(...step);
-        const k = len > 0.015 ? 0.015 / len : 1;
-        leg.offset = leg.offset.map((x, i) => x + step[i] * k);
+        leg.vel ??= [0, 0, 0];
+        const k = 0.12;
+        const c = 2 * Math.sqrt(k);
+        for (let i = 0; i < 3; i++) {
+          leg.vel[i] += k * (desired[i] - leg.offset[i]) - c * leg.vel[i];
+          leg.offset[i] += leg.vel[i];
+        }
         if (Math.hypot(...leg.offset) < 1e-4) continue;
         const target = ankle.map((x, i) => x + leg.offset[i]);
         const hip = P(leg.info.u);
         const knee = P(leg.info.m);
-        // Bend toward where the knee points; with a straight knee, keep the last bend direction.
-        let pole = [0, 1, 2].map((i) => knee[i] - (hip[i] + ankle[i]) / 2);
-        if (Math.hypot(...pole) < 0.02 && leg.side) pole = leg.side;
-        const { dU, dM } = ikDirections(leg.info, hip, target, pole);
-        const axis = target.map((x, i) => x - hip[i]);
-        const al = Math.hypot(...axis);
-        leg.side = dU.map((x, i) => x - axis[i] / al);
+        const { dU, dM } = ikDirections(leg.info, hip, target, leg.side);
         const r = solveLimb(sk, leg.info, local, world, dU, dM, { prevNormal: this.cache.normals[leg.slot] });
         this.cache.normals[leg.slot] = r.normal;
         this.stats.locked++;

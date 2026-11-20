@@ -121,6 +121,7 @@ const haveCMU = CMU.every((id) => existsSync(`${CLIPS}${id}.bvh`));
 test('a long chain of retargeted CMU dance plays without pops at handovers', { skip: skip || (!haveCMU && 'CMU clips missing'), timeout: 600_000 }, () =>
   chainCheck('CMU dance', (fx, skeleton) => Object.fromEntries(CMU.map((id) =>
     [id, retarget(parseBVH(readFileSync(`${CLIPS}${id}.bvh`, 'utf8')), skeleton)])),
-  // With the default constraints, as the app plays it. Measured: up to 1.9x
-  // (raw model output on these targets: 3.0x at one right-arm handover).
-  2.5, true));
+  // With the default constraints, as the app plays it. Measured: up to 1.34x
+  // (raw model output on these targets: 3.0x at one right-arm handover, an
+  // arm that reverses direction at the join).
+  2.0, true));

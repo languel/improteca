@@ -8,8 +8,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Skeleton } from '../src/engine/skeleton.js';
 import { parseBVH } from '../src/engine/bvh.js';
-import { retarget, CMU_TO_SOMA, bvhToSoma, leadingCalibrationFrame } from '../src/engine/retarget.js';
-import { TF } from '../src/engine/math.js';
+import { retarget, CMU_TO_SOMA, bvhToSoma, leadingCalibrationFrame, rotationBetweenFrames } from '../src/engine/retarget.js';
+import { TF, qrot } from '../src/engine/math.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const CLIP = `${root}local/clips/cmu-ballet-pirouette-05-02.bvh`;
@@ -59,4 +59,13 @@ test('CMU bones keep their directions on SOMA', { skip }, () => {
 
 test('BVH files are recognised as CMU or SOMA', { skip }, () => {
   assert.equal(bvhToSoma(readFileSync(CLIP, 'utf8'), soma, parseBVH).method, 'CMU retarget');
+});
+
+test('a frame rotation keeps the primary axis when the secondary turns half way round', () => {
+  // The case that swung an arm for two frames: secondaries exactly opposite
+  // after aligning the primaries.
+  const n = [0, 1, 0];
+  const q = rotationBetweenFrames([0, 1, 0], [1, 0, 0], n, [-1, 0, 0]);
+  const p = qrot(q, [0, 1, 0]);
+  for (let i = 0; i < 3; i++) assert.ok(Math.abs(p[i] - n[i]) < 1e-6, `primary moved: ${p} vs ${n}`);
 });

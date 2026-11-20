@@ -127,7 +127,7 @@ export function solveLimb(skeleton, info, local, world, dU, dM, { range = HINGE_
   setTf(world, m, tf(posM, qM));
   setTf(local, e, tf(tp(le), qnormalize(qmul(qinv(qM), endWorldQ))));
   setTf(world, e, tf(posE, endWorldQ));
-  return { angle, normal: best.axis, clamped: best.out > 1e-6 };
+  return { angle, normal: best.axis, clamped: best.out > 1e-6, outBy: best.out };
 }
 
 /**
