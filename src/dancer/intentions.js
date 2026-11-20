@@ -54,6 +54,7 @@ const MATERIAL = [
   [/\b(ballet|classical|balletic)\b/, 'ballet'],
   [/\b(contemporary|modern)\b/, 'dance'],
   [/\b(everyday|pedestrian|ordinary|daily|casual|natural)\b/, 'everyday'],
+  [/\b(films?|archival|vintage|historic(?:al)?|old footage|silent film|muybridge|sandow)\b/, 'film'],
 ];
 
 const VARIETY = [

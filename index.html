@@ -60,9 +60,14 @@
       <details id="repertoire-details">
         <summary><h2>Repertoire</h2></summary>
         <p id="repertoire" class="hint">Nothing learned yet.</p>
-        <p class="hint">Teach it more from the <a href="https://languel.github.io/mediatheque/" target="_blank" rel="noopener">mediathèque</a> (tap a clip), or from a BVH file.</p>
+        <p class="hint">Teach it more, from motion capture or films in the <a href="https://languel.github.io/mediatheque/" target="_blank" rel="noopener">mediathèque</a> (tap a clip), or from a BVH file.</p>
+        <h3>Motion capture</h3>
         <label class="file">Teach a BVH…<input id="bvh" type="file" accept=".bvh" multiple></label>
         <ul id="catalog" class="catalog"></ul>
+        <h3>Films</h3>
+        <p class="hint">The dancer watches a film (pose estimation with MediaPipe), fits its body to it and learns the movement. One camera: depth is approximate, travel is sideways only, jumps stay on the floor.</p>
+        <label class="file">Teach a video file…<input id="video-file" type="file" accept="video/*"></label>
+        <ul id="films" class="catalog"></ul>
       </details>
     </section>
 

@@ -17,7 +17,9 @@ src/dancer/   the dancer
   transforms.js   mirror (exact, with SOMA's rest frames) and placement
   intentions.js   prompt -> intentions with a built-in movement vocabulary
   llm.js          prompt -> intentions with Claude (optional, user's own key)
-app/          the pages: dancer.js (index.html), inbetweener.js, stage, model loading
+  fit.js          video pose (MediaPipe landmarks) -> SOMA rotations
+app/          the pages: dancer.js (index.html), inbetweener.js, stage, model loading,
+              video.js (MediaPipe pose on a film, then fit.js)
 assets/soma/  the SOMA skeleton (names, parents, rest pose)
 reference/    a script that runs NVIDIA's own pipeline on CPU to make test fixtures
 tests/        node --test
@@ -98,3 +100,7 @@ things, and skip without them:
   4.5 m of centre. In MotionBricks chains, transitions between movements hand
   over smoothly; the sharpest handover found was inside a turning ballet
   phrase (likely the head spotting), not at a transition.
+- **Films.** With ideal landmarks the fitter recovers every limb direction
+  exactly (test); the spine is approximated by the straight hip-to-shoulder
+  line (about 7°). Light smoothing (±1 frame at 15 fps) costs about 2° on fast
+  movement in exchange for less detector jitter.

@@ -29,6 +29,10 @@ replayed from its seed.
   described (level, size, energy, travel, turning, jumps, which part leads).
 - **Improviser**: chooses by intention, continuity with the current pose and
   novelty; mirrors, reverses, re-tempos and keeps the dancer on stage.
+- **Films**: the dancer can watch a film from the mediathèque (Sandow, Muybridge,
+  dancers of 1887...) or your own video, estimate the pose with MediaPipe, fit
+  its body to it and learn the movement. One camera: depth is approximate,
+  travel is sideways only, and jumps stay on the floor.
 - **Inbetweener** (`inbetweener.html`): place poses by hand and play motion
   through them.
 

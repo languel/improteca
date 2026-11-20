@@ -133,3 +133,41 @@ test('the dancer stays on stage and does not loop one movement', { skip }, () =>
   for (const c of run) assert.ok(Math.hypot(...c.root) < 4.5, `left the stage at ${c.root}`);
   for (let i = 1; i < run.length; i++) assert.notEqual(run[i].entry.movement, run[i - 1].entry.movement);
 });
+
+// ---- video pose fitting ---------------------------------------------------------------
+
+import { fitClip, fromMediaPipe, LM } from '../src/dancer/fit.js';
+
+test('pose fitting recovers limb directions exactly from ideal landmarks', { skip }, () => {
+  const file = cmu.find((f) => f.includes('arabesque-05-03')) || cmu[0];
+  const { clip } = bvhToSoma(readFileSync(CLIPS + file, 'utf8'), soma, parseBVH);
+  // The landmarks a perfect detector would report, in MediaPipe's convention.
+  const at = { shoulderL: 'LeftArm', shoulderR: 'RightArm', elbowL: 'LeftForeArm', elbowR: 'RightForeArm', wristL: 'LeftHand', wristR: 'RightHand',
+    indexL: 'LeftHandMiddle1', pinkyL: 'LeftHandMiddle1', indexR: 'RightHandMiddle1', pinkyR: 'RightHandMiddle1', hipL: 'LeftLeg', hipR: 'RightLeg',
+    kneeL: 'LeftShin', kneeR: 'RightShin', ankleL: 'LeftFoot', ankleR: 'RightFoot', footL: 'LeftToeBase', footR: 'RightToeBase', earL: 'Head', earR: 'Head', nose: 'HeadEnd' };
+  const fps = 15;
+  const world = [];
+  for (let f = 0; f < Math.floor(clip.duration * fps); f++) {
+    const w = soma.world(clip.sample(f / fps));
+    const hip = [0, 1, 2].map((k) => (w[soma.jointIndex('LeftLeg') * TF + k] + w[soma.jointIndex('RightLeg') * TF + k]) / 2);
+    const lm = Array.from({ length: 33 }, () => ({ x: 0, y: 0, z: 0 }));
+    for (const [k, joint] of Object.entries(at)) {
+      const o = soma.jointIndex(joint) * TF;
+      lm[LM[k]] = { x: w[o] - hip[0], y: -(w[o + 1] - hip[1]), z: -(w[o + 2] - hip[2]) };
+    }
+    world.push(fromMediaPipe(lm));
+  }
+  const out = fitClip({ world, fps, smoothing: 0 }, soma);
+  let worst = 0;
+  for (let f = 0; f < world.length; f++) {
+    const a = soma.world(clip.sample(f / fps));
+    const b = soma.world(out.sample(f / fps));
+    for (const [x, y] of [['LeftArm', 'LeftForeArm'], ['RightForeArm', 'RightHand'], ['LeftLeg', 'LeftShin'], ['RightShin', 'RightFoot'], ['LeftFoot', 'LeftToeBase']]) {
+      const v = (w) => [0, 1, 2].map((k) => w[soma.jointIndex(y) * TF + k] - w[soma.jointIndex(x) * TF + k]);
+      const s = v(a);
+      const t = v(b);
+      worst = Math.max(worst, Math.acos(Math.min(1, (s[0] * t[0] + s[1] * t[1] + s[2] * t[2]) / Math.hypot(...s) / Math.hypot(...t))));
+    }
+  }
+  assert.ok(worst < 1e-3, `limb direction error ${worst} rad`);
+});

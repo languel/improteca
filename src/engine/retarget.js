@@ -52,7 +52,7 @@ const BONE_CHILD = {
 };
 
 /** The shortest rotation taking direction a to direction b. */
-function rotationBetween(a, b) {
+export function rotationBetween(a, b) {
   const na = Math.hypot(...a);
   const nb = Math.hypot(...b);
   if (na < 1e-9 || nb < 1e-9) return [0, 0, 0, 1];
@@ -70,7 +70,7 @@ function rotationBetween(a, b) {
 }
 
 /** Rotation taking an orthonormal-ish frame (primary a1, secondary a2) onto (b1, b2). */
-function rotationBetweenFrames(a1, a2, b1, b2) {
+export function rotationBetweenFrames(a1, a2, b1, b2) {
   const q1 = rotationBetween(a1, b1);
   const a2r = qrot(q1, a2);
   // Twist about b1 so a2r lines up with b2 in the plane perpendicular to b1.

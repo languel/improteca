@@ -17,6 +17,7 @@ import { learn } from '../src/dancer/repertoire.js';
 import { Improviser, rng } from '../src/dancer/improviser.js';
 import { parsePrompt, describeIntentions } from '../src/dancer/intentions.js';
 import { intentionsFromClaude } from '../src/dancer/llm.js';
+import { learnFromVideo } from './video.js';
 
 const params = new URLSearchParams(location.search);
 const $ = (id) => document.getElementById(id);
@@ -79,6 +80,8 @@ async function boot() {
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => performer.setColor(performerColor()));
   state.improviser = new Improviser({ skeleton: state.skeleton, movements: [], seed: Number($('seed').value) });
   bindUI();
+  // For inspection from the console and automated checks.
+  window.improteca = { state, ready: false, pose: (local) => performer.setPose(local) };
   requestAnimationFrame(frame);
   if (params.get('prompt')) $('prompt').value = params.get('prompt');
   if (params.get('seed')) $('seed').value = params.get('seed');
@@ -113,10 +116,10 @@ const tagsOf = (id) => {
 };
 
 /** Teach the dancer one clip (BVH text). */
-function teach({ id, name, text, credit = '' }) {
+function teach({ id, name, text = null, clip = null, credit = '', tags = null }) {
   if (state.sources.some((s) => s.id === id)) return 0;
-  const { clip } = bvhToSoma(text, state.skeleton, parseBVH);
-  const source = { id, name, clip, tags: tagsOf(id), credit };
+  clip ??= bvhToSoma(text, state.skeleton, parseBVH).clip;
+  const source = { id, name, clip, tags: tags ?? tagsOf(id), credit };
   const moves = learn(source, state.skeleton);
   state.sources.push(source);
   state.improviser.addMovements(moves);
@@ -244,7 +247,7 @@ function start() {
   state.trail = [];
   pump(state.run);
   updateButtons();
-  window.improteca = { state, ready: true };
+  window.improteca.ready = true;
 }
 
 /** Keep two segments generated ahead of playback. */
@@ -365,6 +368,9 @@ function renderRepertoire() {
   for (const b of document.querySelectorAll('#catalog button')) {
     if (state.sources.some((s) => s.id === b.dataset.id)) b.setAttribute('aria-pressed', 'true');
   }
+  for (const b of document.querySelectorAll('#films button')) {
+    if (state.sources.some((s) => s.id === b.dataset.id)) b.setAttribute('aria-pressed', 'true');
+  }
 }
 
 async function showCatalog() {
@@ -386,6 +392,65 @@ async function showCatalog() {
         } catch (err) {
           setStatus(err.message);
         }
+        b.disabled = false;
+      });
+      li.append(b);
+      list.append(li);
+    }
+  } catch (err) {
+    list.textContent = err.message;
+  }
+}
+
+const films = (items) => items.filter((i) => ['video', 'animation'].includes(i.kind) && i.proxy && (i.demos || []).includes('pose') && (i.tags || []).includes('fullbody'));
+
+let filmCatalog = null;
+async function loadFilms() {
+  if (filmCatalog) return filmCatalog;
+  const res = await fetch(MEDIATHEQUE + 'catalog.json');
+  if (!res.ok) throw new Error(`mediathèque catalog: HTTP ${res.status}`);
+  filmCatalog = films(await res.json());
+  return filmCatalog;
+}
+
+async function learnFilm({ id, name, url, credit = '' }) {
+  setStatus(`Watching ${name}…`);
+  setProgress(0);
+  try {
+    const { clip, frames, tracked } = await learnFromVideo(url, state.skeleton, {
+      onProgress: (f, note) => {
+        setProgress(f);
+        setStatus(`${name}: ${note}`);
+      },
+    });
+    const n = teach({ id, name, clip, credit, tags: ['film'] });
+    setStatus(`Learned ${n} movements from ${name} (dancer found in ${tracked} of ${frames} frames).`);
+    return n;
+  } catch (err) {
+    console.error(err);
+    setStatus(`${name}: ${err.message || err}`);
+    return 0;
+  } finally {
+    setProgress(null);
+  }
+}
+
+async function showFilms() {
+  const list = $('films');
+  if (list.childElementCount) return;
+  try {
+    for (const item of await loadFilms()) {
+      const li = document.createElement('li');
+      const b = document.createElement('button');
+      b.dataset.id = item.id;
+      b.title = item.summary || item.title;
+      b.setAttribute('aria-pressed', String(state.sources.some((s) => s.id === item.id)));
+      b.innerHTML = `<img loading="lazy" alt="" src="${MEDIATHEQUE + item.thumb}"><span></span>`;
+      b.querySelector('span').textContent = item.title.replace(/\s*\([^)]*\)\s*$/, '');
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        const n = await learnFilm({ id: item.id, name: b.querySelector('span').textContent, url: MEDIATHEQUE + item.proxy, credit: item.rights?.credit || '' });
+        if (n) b.setAttribute('aria-pressed', 'true');
         b.disabled = false;
       });
       li.append(b);
@@ -441,7 +506,19 @@ function bindUI() {
   $('seed').addEventListener('change', () => setSeed(Number($('seed').value) || 1));
   $('reseed').addEventListener('click', () => setSeed(1 + Math.floor(Math.random() * 99999)));
   $('export').addEventListener('click', exportLog);
-  $('repertoire-details').addEventListener('toggle', () => $('repertoire-details').open && showCatalog());
+  $('repertoire-details').addEventListener('toggle', () => {
+    if (!$('repertoire-details').open) return;
+    showCatalog();
+    showFilms();
+  });
+  $('video-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    await learnFilm({ id: `file:${file.name}`, name: file.name.replace(/\.[^.]+$/, ''), url });
+    URL.revokeObjectURL(url);
+    e.target.value = '';
+  });
   $('bvh').addEventListener('change', async (e) => {
     for (const file of e.target.files) {
       try {
