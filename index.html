@@ -126,12 +126,26 @@
     </section>
 
     <section>
-      <details>
-        <summary><h2>Language model</h2></summary>
-        <p class="hint">Prompts are read by a built-in movement vocabulary. For freer language and imagery, use Claude with your own Anthropic API key. The key is sent only to Anthropic.</p>
-        <label class="check"><input id="use-llm" type="checkbox"> Use Claude for prompts</label>
-        <input id="api-key" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
-        <label class="check"><input id="remember-key" type="checkbox"> Remember on this device</label>
+      <details id="brain-panel">
+        <summary><h2>Brain</h2></summary>
+        <p class="hint">A language model reads freer language and imagery in prompts. Without one, a built-in movement vocabulary reads them. WebGPU models run in this browser (a one-time download, nothing leaves your machine); local servers need to allow this page's origin (for Ollama: <code>OLLAMA_ORIGINS</code>); cloud models use your own key, sent only to that provider.</p>
+        <label class="check">Brain <select id="brain"></select></label>
+        <div id="brain-local" class="row" hidden>
+          <button id="brain-load" type="button">Load</button>
+          <span id="brain-size" class="hint"></span>
+        </div>
+        <div id="brain-remote" hidden>
+          <label class="field">Address <input id="brain-url" type="url" spellcheck="false" autocomplete="off"></label>
+          <label class="field">Model <input id="brain-model" list="brain-models" spellcheck="false" autocomplete="off"></label>
+          <datalist id="brain-models"></datalist>
+          <label class="field" id="brain-key-row">API key <input id="api-key" type="password" placeholder="your key" autocomplete="off" spellcheck="false"></label>
+          <div class="row">
+            <label class="check"><input id="remember-key" type="checkbox"> Remember key on this device</label>
+            <button id="brain-list" type="button">List models</button>
+          </div>
+        </div>
+        <div class="row"><button id="brain-test" type="button">Try it</button></div>
+        <p id="brain-status" class="hint"></p>
       </details>
     </section>
 

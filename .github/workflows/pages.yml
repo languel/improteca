@@ -42,7 +42,7 @@ jobs:
       - name: Collect the site
         run: |
           mkdir -p _site
-          cp -r index.html inbetweener.html app src assets LICENSE _site/
+          cp -r index.html inbetweener.html app src assets vendor LICENSE _site/
       # The 8-bit model is built from NVIDIA's FP32 file on deploy (never committed),
       # and cached until NVIDIA's repository or the build script changes.
       - name: Find NVIDIA's MotionBricks revision

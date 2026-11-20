@@ -137,12 +137,11 @@ details[open] summary h2::after { content: ' ▾'; }
 
 /* Dancer page */
 .label { display: block; font-weight: 600; margin-bottom: 6px; }
-textarea, #api-key, .row input[type="number"] {
+textarea, .row input[type="number"] {
   font: inherit; color: var(--text); background: var(--field);
   border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; width: 100%;
 }
 textarea { resize: vertical; min-height: 64px; }
-#api-key { margin: 8px 0; }
 .row input[type="number"] { width: 72px; padding: 4px 6px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
 .chip { font-size: 12.5px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; background: var(--field); color: var(--text); cursor: pointer; }
@@ -169,3 +168,11 @@ select { font: inherit; font-size: 13px; color: var(--text); background: var(--f
 .slider output { text-align: right; font-variant-numeric: tabular-nums; }
 .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 2px; }
 #view-panel .row { margin: 4px 0; }
+
+.field { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); margin: 6px 0; }
+.field input { font: inherit; color: var(--text); background: var(--field); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; width: 100%; min-width: 0; }
+#brain-panel select { max-width: 100%; }
+code { font-size: 12px; }
+[hidden] { display: none !important; }
+#brain { width: 100%; }
+#brain-panel > details > label.check, #brain-panel label.check:has(#brain) { display: grid; grid-template-columns: 64px 1fr; gap: 8px; }

@@ -20,7 +20,7 @@ src/dancer/   the dancer
   composer.js     phrase memory: state, develop and return to motifs
   transforms.js   mirror (exact, with SOMA's rest frames) and placement
   intentions.js   prompt -> intentions with a built-in movement vocabulary
-  llm.js          prompt -> intentions with Claude (optional, user's own key)
+  brains.js       prompt -> intentions with a language model: WebGPU (LFM3), local servers or cloud APIs
   fit.js          video pose (MediaPipe landmarks) -> SOMA rotations
 app/          the pages: dancer.js (index.html), inbetweener.js, stage, figures.js
               (sticks, mannequin, SOMA body, drawn, markers), viz.js (trails, echoes...),

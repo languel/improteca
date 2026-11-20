@@ -18,7 +18,8 @@ import { TF } from '../src/engine/math.js';
 import { learn } from '../src/dancer/repertoire.js';
 import { Improviser, rng } from '../src/dancer/improviser.js';
 import { parsePrompt, describeIntentions } from '../src/dancer/intentions.js';
-import { intentionsFromClaude } from '../src/dancer/llm.js';
+import { intentionsFromBrain } from '../src/dancer/brains.js';
+import { setupBrainPanel, brainSettings, brainName, brainActive } from './brain-panel.js';
 import { learnFromVideo } from './video.js';
 
 const params = new URLSearchParams(location.search);
@@ -42,7 +43,6 @@ const EXAMPLES = [
   'travel across the space, unpredictable',
   'calm and still, arms high',
 ];
-const KEY_STORE = 'improteca.anthropic-key';
 
 const state = {
   skeleton: null,
@@ -217,16 +217,16 @@ function loadEverything() {
 // ---- prompt -> intentions --------------------------------------------------------------
 
 async function readPrompt(prompt) {
-  const key = $('api-key').value.trim();
-  if ($('use-llm').checked && key) {
-    setStatus('Asking Claude how to read the prompt…');
+  if (brainActive()) {
+    const name = brainName();
+    setStatus(`Asking ${name} how to read the prompt…`);
     try {
-      const { intentions, summary } = await intentionsFromClaude(prompt, key);
-      return { intentions, note: `Claude: ${summary}` };
+      const { intentions, summary } = await intentionsFromBrain(prompt, brainSettings());
+      return { intentions, note: `${name}: ${summary || 'read the prompt'}` };
     } catch (err) {
       console.warn(err);
       const { intentions, understood } = parsePrompt(prompt);
-      return { intentions, note: `Claude unavailable (${err.message}); read with the built-in vocabulary: ${understood.join('; ') || 'nothing recognised'}.` };
+      return { intentions, note: `${name} unavailable (${err.message}); read with the built-in vocabulary: ${understood.join('; ') || 'nothing recognised'}.` };
     }
   }
   const { intentions, understood } = parsePrompt(prompt);
@@ -710,30 +710,7 @@ function bindUI() {
     }
     e.target.value = '';
   });
-  // API key: memory only, unless the user asks to remember it.
-  try {
-    const saved = localStorage.getItem(KEY_STORE);
-    if (saved) {
-      $('api-key').value = saved;
-      $('remember-key').checked = true;
-      $('use-llm').checked = true;
-    }
-  } catch {
-    // Storage blocked: the key stays in memory only.
-  }
-  const persist = () => {
-    try {
-      if ($('remember-key').checked && $('api-key').value.trim()) localStorage.setItem(KEY_STORE, $('api-key').value.trim());
-      else localStorage.removeItem(KEY_STORE);
-    } catch {
-      // ignore
-    }
-  };
-  $('remember-key').addEventListener('change', persist);
-  $('api-key').addEventListener('change', persist);
-  $('api-key').addEventListener('input', () => {
-    if ($('api-key').value.trim()) $('use-llm').checked = true;
-  });
+  setupBrainPanel();
 }
 
 function updateButtons() {

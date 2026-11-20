@@ -4,7 +4,7 @@
 // prompt to the improviser's intention values, with intensifiers ("very"),
 // softeners ("a bit") and negation ("not", "no", "less", "without"). It
 // explains what it understood. An optional language model can produce the
-// same object from freer text (see llm.js).
+// same object from freer text (see brains.js).
 
 import { NEUTRAL } from './improviser.js';
 

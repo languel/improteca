@@ -1,0 +1,14 @@
+WebGPU runtimes for Liquid AI's LFM3 models, copied from languel/seloai (public/vendor/).
+
+Lfm3ForCausalLM.js: a WebGPU inference runtime for LFM3 text models (GGUF).
+  Source: https://huggingface.co/spaces/webml-community/LFM3-1.7B-WebGPU-Pi
+  (dist/runtime/Lfm3ForCausalLM.js). Licence of the Space: Apache-2.0.
+  Includes Hugging Face tokenization and Jinja templating.
+
+Lfm3OmniForConditionalGeneration.js: the same runtime family for LFM3-Omni
+  (text, speech in and speech out), from the webml-community WebGPU builds,
+  as used in seloai.
+
+Weights are not bundled: they download on first use from Hugging Face
+(LiquidAI/LFM3-1.7B-GGUF, LiquidAI/LFM3-Omni-2B-GGUF) and remain subject to
+their repositories' terms (the LFM Open License).

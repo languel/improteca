@@ -179,6 +179,14 @@ Why this split:
   lighter path: a small text-only model, or a hosted model (for example
   Claude) when the user supplies a key. The intention format is the same
   either way, so the choice of model is swappable.
+- Implemented in `src/dancer/brains.js` (providers and request shapes follow
+  languel/seloai): LFM3-Omni-2B and LFM3-1.7B on WebGPU (runtimes in
+  `vendor/`), Ollama, LM Studio, Anthropic (official SDK, structured
+  output), OpenAI, OpenRouter, Gemini, GitHub Models and any
+  OpenAI-compatible server. Where a provider supports structured output it
+  is used; otherwise the model is asked for JSON in words and its answer is
+  read leniently and validated, so a small model's slips fall back to the
+  built-in vocabulary rather than to nonsense.
 
 ### 3.8 The phone camera
 

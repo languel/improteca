@@ -23,8 +23,12 @@ moves with [NVIDIA MotionBricks](https://github.com/NVlabs/motionbricks) between
 them, in the browser. Every choice is logged with its reasons and can be
 replayed from its seed.
 
-- **Prompt**: a built-in movement vocabulary always works; optionally Claude
-  reads freer language and imagery with your own API key.
+- **Prompt**: a built-in movement vocabulary always works. A language model
+  (the **Brain** panel) reads freer language and imagery: LFM3-Omni-2B or
+  LFM3-1.7B on WebGPU in the browser (one-time download, nothing leaves your
+  machine), Ollama or LM Studio on your machine, or Claude, OpenAI,
+  OpenRouter, Gemini, GitHub Models or any OpenAI-compatible API with your
+  own key.
 - **Repertoire**: clips are split into movements at natural pauses and
   described (level, size, energy, travel, turning, jumps, which part leads).
 - **Improviser**: chooses by intention, continuity with the current pose and
