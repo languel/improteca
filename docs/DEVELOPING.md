@@ -22,12 +22,14 @@ src/dancer/   the dancer
   intentions.js   prompt -> intentions with a built-in movement vocabulary
   llm.js          prompt -> intentions with Claude (optional, user's own key)
   fit.js          video pose (MediaPipe landmarks) -> SOMA rotations
-app/          the pages: dancer.js (index.html), inbetweener.js, stage,
+app/          the pages: dancer.js (index.html), inbetweener.js, stage, figures.js
+              (sticks, mannequin, SOMA body, drawn, markers), viz.js (trails, echoes...),
               engine-client.js + model-worker.js (the model in a Web Worker),
               video.js (MediaPipe pose on a film, then fit.js)
 assets/soma/  the SOMA skeleton (names, parents, rest pose)
 reference/    a script that runs NVIDIA's own pipeline on CPU to make test fixtures
-tools/        build_int8.py: the 8-bit browser model (CI runs it on deploy)
+tools/        build_int8.py: the 8-bit browser model; build_body.py: the SOMA body mesh
+              (CI runs both on deploy; nothing from NVIDIA is committed)
 models/       built models served with the site (git-ignored)
 tests/        node --test
 local/        model, clips and fixtures for testing (git-ignored)

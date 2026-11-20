@@ -74,7 +74,10 @@ export class Inbetweener {
     this.endFrame = Math.max(POSES_PER_TOKEN - 1, out.frameCount - 1 - (target.early ?? 0));
     if (this.constraints) {
       // Frame 0 repeats the last played (already corrected) pose, except at the start.
-      this.constraints.apply(out.poses, out.contacts, this.first ? 0 : 1, this.endFrame);
+      const from = this.first ? 0 : 1;
+      const act = this.constraints.apply(out.poses, out.contacts, from, this.endFrame);
+      out.activity = [];
+      act.forEach((a, i) => (out.activity[from + i] = a));
     }
     this.first = false;
     return out;

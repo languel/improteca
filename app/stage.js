@@ -40,19 +40,36 @@ export class Stage {
     this.scene.add(this.grid);
     this.trail = null;
 
+    this.bgMode = 'auto';
     this.applyTheme();
     matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => this.applyTheme());
     new ResizeObserver(() => this.resize()).observe(container);
     this.resize();
   }
 
+  /** 'auto' follows the page's theme; 'light' and 'dark' override it (e.g. for a drawn look). */
+  setBackground(mode = 'auto') {
+    this.bgMode = mode;
+    this.applyTheme();
+  }
+
+  isDark() {
+    if (this.bgMode === 'dark') return true;
+    if (this.bgMode === 'light') return false;
+    return matchMedia('(prefers-color-scheme: dark)').matches && document.documentElement.dataset.theme !== 'light';
+  }
+
   applyTheme() {
     const css = getComputedStyle(document.documentElement);
     const get = (name, fallback) => css.getPropertyValue(name).trim() || fallback;
-    this.scene.background = new THREE.Color(get('--stage-bg', '#ece9e2'));
-    this.floor.material.color.set(get('--stage-floor', '#e2ded5'));
-    const line = new THREE.Color(get('--stage-grid', '#cfc9bd'));
-    this.grid.material.color = line;
+    let bg = get('--stage-bg', '#ece9e2');
+    let floor = get('--stage-floor', '#e2ded5');
+    let grid = get('--stage-grid', '#cfc9bd');
+    if (this.bgMode === 'dark') [bg, floor, grid] = ['#0d0c0b', '#121110', '#1f1d1a'];
+    if (this.bgMode === 'light') [bg, floor, grid] = ['#ece9e2', '#e2ded5', '#cfc9bd'];
+    this.scene.background = new THREE.Color(bg);
+    this.floor.material.color.set(floor);
+    this.grid.material.color = new THREE.Color(grid);
     this.grid.material.vertexColors = false;
   }
 

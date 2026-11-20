@@ -163,3 +163,9 @@ h3 { font-size: 13px; margin: 14px 0 6px; }
 .form .current { color: var(--accent); font-weight: 600; }
 .now .phrase { display: inline-block; font-size: 12px; font-weight: 600; color: var(--accent); margin-right: 6px; }
 select { font: inherit; font-size: 13px; color: var(--text); background: var(--field); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; max-width: 100%; }
+
+.slider { display: grid; grid-template-columns: 112px 1fr 64px; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); margin: 4px 0; }
+.slider input { width: 100%; min-width: 0; accent-color: var(--accent); }
+.slider output { text-align: right; font-variant-numeric: tabular-nums; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 2px; }
+#view-panel .row { margin: 4px 0; }

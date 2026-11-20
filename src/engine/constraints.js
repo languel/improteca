@@ -122,13 +122,14 @@ export function applyJointLimits(skeleton, local, strength = 1, cache = {}) {
     return [[m[0] - u[0], m[1] - u[1], m[2] - u[2]], [e[0] - m[0], e[1] - m[1], e[2] - m[2]]];
   });
   cache.prev ??= {};
-  for (const [j, limit] of cache.inner) if (clampJoint(skeleton, local, j, limit, strength, cache.prev)) n++;
+  cache.changed = [];
+  for (const [j, limit] of cache.inner) if (clampJoint(skeleton, local, j, limit, strength, cache.prev)) (n++, cache.changed.push(j));
   world = skeleton.world(local);
   cache.limbs.forEach((info, i) => {
     const before = [info.u, info.m, info.e].map((j) => tq(getTf(local, j)));
     const r = solveLimb(skeleton, info, local, world, dirs[i][0], dirs[i][1], { prevNormal: cache.normals[i] });
     cache.normals[i] = r.normal;
-    if (r.clamped) n++;
+    if (r.clamped) (n++, cache.changed.push(info.m));
     if (strength < 1) {
       // Partial strength: blend the limb's rotations back toward the original.
       [info.u, info.m, info.e].forEach((j, k) => {
@@ -136,7 +137,7 @@ export function applyJointLimits(skeleton, local, strength = 1, cache = {}) {
       });
     }
   });
-  for (const [j, limit] of cache.ends) if (clampJoint(skeleton, local, j, limit, strength, cache.prev)) n++;
+  for (const [j, limit] of cache.ends) if (clampJoint(skeleton, local, j, limit, strength, cache.prev)) (n++, cache.changed.push(j));
   return n;
 }
 
@@ -181,6 +182,7 @@ export class Constraints {
   /**
    * Correct frames [from..to] of a segment in place.
    * poses: frames * joints * 7; contacts: frames * 4 (probabilities), may be null.
+   * Returns, per frame from..to, what was done: { joints: corrected joints, planted: [left, right], lifted }.
    */
   apply(poses, contacts, from, to) {
     const J = this.sk.numJoints;
@@ -189,6 +191,7 @@ export class Constraints {
     // (dv * t * (1 - t/T)^2), so position and velocity are both continuous.
     // Velocities are compared on the model's raw frames on both sides, so the
     // corrections themselves are not mistaken for motion.
+    const activity = [];
     let dv = null;
     if (from > 0 && this.rawLast && this.rawBeforeLast && this.settings.smooth > 0 && to >= from + 1) {
       const before = velocity(this.rawBeforeLast, this.rawLast);
@@ -201,15 +204,20 @@ export class Constraints {
       this.rawLast = Float64Array.from(local);
       const k = f - from + 1;
       if (dv && k <= HANDOVER_FRAMES) addVelocity(local, dv, k * (1 - k / (HANDOVER_FRAMES + 1)) ** 2);
-      this.frame(local, contacts ? contacts.subarray(f * 4, f * 4 + 4) : null);
+      activity.push(this.frame(local, contacts ? contacts.subarray(f * 4, f * 4 + 4) : null));
     }
+    return activity;
   }
 
   frame(local, contact) {
     const S = this.settings;
     const sk = this.sk;
     this.stats.frames++;
-    if (S.limits > 0) this.stats.limits += applyJointLimits(sk, local, S.limits, this.cache) > 0 ? 1 : 0;
+    const act = { joints: [], planted: [false, false], lifted: false };
+    if (S.limits > 0) {
+      this.stats.limits += applyJointLimits(sk, local, S.limits, this.cache) > 0 ? 1 : 0;
+      act.joints = this.cache.changed.slice();
+    }
 
     // Floor: lift the body so nothing is below the floor (smoothed lift, so it does not jump).
     let world = sk.world(local);
@@ -221,6 +229,7 @@ export class Constraints {
       if (this.lift > 1e-4) {
         local[1] += this.lift * S.floor;
         this.stats.lifted++;
+        act.lifted = true;
         world = sk.world(local);
       }
     }
@@ -302,7 +311,9 @@ export class Constraints {
         this.cache.normals[leg.slot] = r.normal;
         this.stats.locked++;
       }
+      this.legs.forEach((leg, i) => (act.planted[i] = !!leg.lock));
     }
+    return act;
   }
 }
 

@@ -4,7 +4,10 @@
 //
 // URL options: ?model=<onnx url> &backend=wasm &prompt=<text> &seed=<n> &autoplay &clips=<id,id>
 
-import { Stage, Mannequin } from './stage.js';
+import { Stage } from './stage.js';
+import { Viz, PRESETS, PARTS, DEFAULT_VIEW } from './viz.js';
+import { FIGURES } from './figures.js';
+import { Constraints, DEFAULTS as BODY_DEFAULTS } from '../src/engine/constraints.js';
 import { startEngine, savedChoice, saveChoice } from './engine-client.js';
 import { Skeleton } from '../src/engine/skeleton.js';
 import { parseBVH } from '../src/engine/bvh.js';
@@ -66,7 +69,23 @@ const state = {
 
 const stage = new Stage($('viewport'));
 const performerColor = () => getComputedStyle(document.documentElement).getPropertyValue('--performer').trim() || '#2f2c28';
-let performer = null;
+let viz = null;
+const VIEW_STORE = 'improteca.view';
+const BODY_STORE = 'improteca.body';
+const load = (key, fallback) => {
+  try {
+    return { ...fallback, ...JSON.parse(localStorage.getItem(key) || '{}') };
+  } catch {
+    return { ...fallback };
+  }
+};
+const store = (key, value) => {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // ignore
+  }
+};
 
 // ---- boot ----------------------------------------------------------------------
 
@@ -74,13 +93,15 @@ async function boot() {
   const data = await (await fetch('assets/soma/skeleton.json')).json();
   state.skeleton = Skeleton.fromJSON(data);
   state.modelJointNames = data.model_joint_names;
-  performer = new Mannequin(stage, state.skeleton, { color: performerColor() });
-  performer.setPose(state.skeleton.reference);
-  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => performer.setColor(performerColor()));
+  viz = new Viz(stage, state.skeleton);
+  viz.setColor(performerColor());
+  await viz.set(params.get('view') && PRESETS[params.get('view')] ? PRESETS[params.get('view')].view : load(VIEW_STORE, DEFAULT_VIEW));
+  viz.update(state.skeleton.reference);
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => viz.setColor(performerColor()));
   state.improviser = new Improviser({ skeleton: state.skeleton, movements: [], seed: Number($('seed').value) });
   bindUI();
   // For inspection from the console and automated checks.
-  window.improteca = { state, ready: false, pose: (local) => performer.setPose(local) };
+  window.improteca = { state, ready: false, pose: (local) => viz.update(local), viz };
   requestAnimationFrame(frame);
   if (params.get('prompt')) $('prompt').value = params.get('prompt');
   if (params.get('seed')) $('seed').value = params.get('seed');
@@ -253,7 +274,9 @@ function start() {
   state.run++;
   state.running = true;
   state.paused = false;
-  state.player = new Inbetweener(state.engine);
+  state.constraints = new Constraints(state.skeleton, bodySettings());
+  state.player = new Inbetweener(state.engine, { constraints: state.constraints });
+  viz.clear();
   const { targets, entry } = state.improviser.next(null);
   state.player.reset(targets[0].poses);
   state.pending = targets.slice(1).map((t, i) => ({ ...t, entry: i === 0 ? entry : null }));
@@ -291,7 +314,7 @@ async function pump(run) {
     }
     if (run !== state.run) return;
     state.player.commit();
-    state.queue.push({ poses: out.poses, endFrame: state.player.endFrame, entry: target.entry, ms: out.inferenceMs });
+    state.queue.push({ poses: out.poses, activity: out.activity, endFrame: state.player.endFrame, entry: target.entry, ms: out.inferenceMs });
   }
 }
 
@@ -300,7 +323,8 @@ function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   if (state.running && !state.paused) advance(dt);
-  if (state.running && $('follow').checked) stage.follow(performer.root());
+  if (state.running && $('follow').checked && viz.figure) stage.follow(viz.figure.root());
+  viz.render(dt);
   stage.render();
   requestAnimationFrame(frame);
 }
@@ -316,9 +340,14 @@ function advance(dt) {
   state.time = Math.min(state.time + dt, end);
   const f = state.time * SAMPLE_RATE;
   const f0 = Math.floor(f);
-  performer.setPose(blendFrames(seg.poses, f0, Math.min(f0 + 1, seg.endFrame), f - f0, J));
-  state.trail.push(performer.root());
-  if (state.trail.length % 3 === 0) stage.setTrail(state.trail.slice(-600), '#c8553d');
+  const pose = blendFrames(seg.poses, f0, Math.min(f0 + 1, seg.endFrame), f - f0, J);
+  // Trails and echoes advance once per model frame (30 Hz); the figure every render frame.
+  if (f0 !== state.lastFrame || seg !== state.lastSeg) {
+    viz.update(pose, { activity: seg.activity?.[f0] });
+    state.lastFrame = f0;
+    state.lastSeg = seg;
+    state.trail.push(1);
+  } else viz.figure?.setPose(pose);
   if (state.time >= end) {
     state.current = null;
     if (state.queue.length) begin(state.queue.shift(), state.time - end);
@@ -519,6 +548,93 @@ function exportLog() {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// ---- body (constraints) and view ------------------------------------------------------
+
+const BODY_KEYS = ['limits', 'feet', 'floor', 'balance', 'smooth'];
+function bodySettings() {
+  return Object.fromEntries(BODY_KEYS.map((k) => [k, Number($(`body-${k}`).value)]));
+}
+
+function bindBody() {
+  const saved = load(BODY_STORE, BODY_DEFAULTS);
+  for (const k of BODY_KEYS) {
+    const input = $(`body-${k}`);
+    input.value = saved[k];
+    const out = input.parentElement.querySelector('output');
+    const show = () => (out.textContent = Number(input.value) === 0 ? 'off' : `${Math.round(input.value * 100)}%`);
+    show();
+    input.addEventListener('input', () => {
+      show();
+      const settings = bodySettings();
+      state.constraints?.set(settings);
+      store(BODY_STORE, settings);
+    });
+  }
+}
+
+function bindView() {
+  const v = viz.view;
+  const fig = $('view-figure');
+  fig.replaceChildren(...Object.entries(FIGURES).map(([k, d]) => new Option(d.label, k)));
+  fig.value = v.figure;
+  const parts = $('view-parts');
+  parts.replaceChildren(...Object.entries(PARTS).map(([k, p]) => {
+    const label = document.createElement('label');
+    label.className = 'check';
+    label.innerHTML = `<input type="checkbox" value="${k}"> <span class="swatch" style="background:${p.color}"></span>${p.label}`;
+    label.querySelector('input').checked = v.trails.includes(k);
+    return label;
+  }));
+  $('view-presets').replaceChildren(...Object.entries(PRESETS).map(([k, p]) => {
+    const b = document.createElement('button');
+    b.className = 'chip';
+    b.type = 'button';
+    b.textContent = p.label;
+    b.addEventListener('click', async () => {
+      await viz.set(p.view);
+      syncView();
+      store(VIEW_STORE, viz.view);
+    });
+    return b;
+  }));
+  const syncView = () => {
+    const w = viz.view;
+    fig.value = w.figure;
+    for (const c of parts.querySelectorAll('input')) c.checked = w.trails.includes(c.value);
+    $('view-trail').value = w.trailSeconds;
+    $('view-ribbons').checked = w.ribbons;
+    $('view-echo').value = w.echoEvery;
+    $('view-echo-count').value = w.echoCount;
+    $('view-footprints').checked = w.footprints;
+    $('view-activity').checked = w.activity;
+    $('view-bg').value = w.background;
+    for (const id of ['view-trail', 'view-echo', 'view-echo-count']) $(id).dispatchEvent(new Event('show'));
+  };
+  const outputs = { 'view-trail': (x) => `${x} s`, 'view-echo': (x) => (Number(x) ? `every ${x} s` : 'off'), 'view-echo-count': (x) => `${x}` };
+  for (const [id, f] of Object.entries(outputs)) {
+    const show = () => ($(id).parentElement.querySelector('output').textContent = f($(id).value));
+    $(id).addEventListener('input', show);
+    $(id).addEventListener('show', show);
+  }
+  const apply = async () => {
+    await viz.set({
+      figure: fig.value,
+      trails: [...parts.querySelectorAll('input:checked')].map((c) => c.value),
+      trailSeconds: Number($('view-trail').value),
+      ribbons: $('view-ribbons').checked,
+      echoEvery: Number($('view-echo').value),
+      echoCount: Number($('view-echo-count').value),
+      footprints: $('view-footprints').checked,
+      activity: $('view-activity').checked,
+      background: $('view-bg').value,
+    });
+    store(VIEW_STORE, viz.view);
+  };
+  for (const el of document.querySelectorAll('#view-panel input, #view-panel select')) el.addEventListener('change', apply);
+  $('view-clear').addEventListener('click', () => viz.clear());
+  syncView();
+}
+
 // ---- UI -------------------------------------------------------------------------------
 
 function bindUI() {
@@ -534,6 +650,8 @@ function bindUI() {
     $('examples').append(b);
   }
   $('dance').addEventListener('click', dance);
+  bindBody();
+  bindView();
   const choice = savedChoice(params);
   for (const [id, value] of [['model', choice.model], ['backend', choice.backend]]) {
     if (![...$(id).options].some((o) => o.value === value)) $(id).add(new Option(value, value));

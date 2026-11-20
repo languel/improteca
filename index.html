@@ -47,6 +47,40 @@
       </div>
     </section>
 
+    <section id="view-panel">
+      <details open>
+        <summary><h2>View</h2></summary>
+        <div id="view-presets" class="chips" aria-label="View presets"></div>
+        <div class="row">
+          <label class="check">Figure <select id="view-figure"></select></label>
+          <label class="check">Stage <select id="view-bg"><option value="auto">Auto</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+        </div>
+        <p class="hint">Trails</p>
+        <div id="view-parts" class="row"></div>
+        <label class="slider">Length <input id="view-trail" type="range" min="1" max="120" step="1"><output></output></label>
+        <label class="check"><input id="view-ribbons" type="checkbox"> Swept forearms and shins</label>
+        <label class="slider">Echoes <input id="view-echo" type="range" min="0" max="4" step="0.1"><output></output></label>
+        <label class="slider">Keep <input id="view-echo-count" type="range" min="1" max="30" step="1"><output></output></label>
+        <div class="row">
+          <label class="check"><input id="view-footprints" type="checkbox"> Footprints</label>
+          <label class="check" title="Joints the body constraints corrected"><input id="view-activity" type="checkbox"> Corrections</label>
+          <button id="view-clear" type="button">Clear traces</button>
+        </div>
+      </details>
+    </section>
+
+    <section>
+      <details>
+        <summary><h2>Body</h2></summary>
+        <p class="hint">Biology and physics on the generated motion. Joint limits keep knees and elbows as hinges within human range; foot planting holds a foot still while it bears weight; floor keeps the body above the ground; balance keeps the centre of mass over the feet; smooth handovers blend the joins between generated pieces.</p>
+        <label class="slider">Joint limits <input id="body-limits" type="range" min="0" max="1" step="0.05"><output></output></label>
+        <label class="slider">Foot planting <input id="body-feet" type="range" min="0" max="1" step="0.05"><output></output></label>
+        <label class="slider">Floor <input id="body-floor" type="range" min="0" max="1" step="0.05"><output></output></label>
+        <label class="slider">Balance <input id="body-balance" type="range" min="0" max="1" step="0.05"><output></output></label>
+        <label class="slider">Smooth handovers <input id="body-smooth" type="range" min="0" max="1" step="0.05"><output></output></label>
+      </details>
+    </section>
+
     <section>
       <h2>Phrases</h2>
       <p class="hint">The dancer remembers motifs (A, B, …) and develops them: repeats, mirrors, reverses, fragments, accumulates, varies. Lower variety ("repetitive") develops more; higher ("unpredictable") invents more.</p>

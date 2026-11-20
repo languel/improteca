@@ -35,6 +35,15 @@ replayed from its seed.
   variety ("repetitive") develops more; high ("unpredictable") invents more.
   The page shows the form as it unfolds, e.g. `A · A backwards · A mirrored ·
   A varied · B`.
+- **Body**: adjustable biology and physics on the generated motion: knees and
+  elbows as true hinges within human range, anatomical limits for spine,
+  neck, wrists and ankles, feet planted while they bear weight, nothing below
+  the floor, optional balance, and smoothed joins between generated pieces.
+- **View**: figures (sticks, a mannequin, NVIDIA's SOMA body, drawn lines,
+  markers), long trails for hands, feet, head and pelvis, swept limbs, time
+  echoes, footprints and markers where the body was corrected. Presets
+  include a functional view and a dark drawn view after *Ghostcatching*
+  (Bill T. Jones, Paul Kaiser, Shelley Eshkar, 1999).
 - **Films**: the dancer can watch a film from the mediathèque (Sandow, Muybridge,
   dancers of 1887...) or your own video, estimate the pose with MediaPipe, fit
   its body to it and learn the movement. One camera: depth is approximate,

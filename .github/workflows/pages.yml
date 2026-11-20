@@ -48,25 +48,26 @@ jobs:
       - name: Find NVIDIA's MotionBricks revision
         id: nvidia
         run: echo "rev=$(git ls-remote https://github.com/NVlabs/motionbricks HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
-      - name: Restore the 8-bit model
-        id: int8
+      - name: Restore the built models
+        id: models
         uses: actions/cache@v4
         with:
-          path: models/int8
-          key: int8-${{ steps.nvidia.outputs.rev }}-${{ hashFiles('tools/build_int8.py') }}
+          path: models
+          key: models-${{ steps.nvidia.outputs.rev }}-${{ hashFiles('tools/build_int8.py', 'tools/build_body.py', 'assets/soma/skeleton.json') }}
       - uses: actions/setup-python@v5
-        if: steps.int8.outputs.cache-hit != 'true'
+        if: steps.models.outputs.cache-hit != 'true'
         with:
           python-version: '3.12'
-      - name: Build the 8-bit model
-        if: steps.int8.outputs.cache-hit != 'true'
+      - name: Build the 8-bit model and the SOMA body
+        if: steps.models.outputs.cache-hit != 'true'
         run: |
-          pip install onnx onnxruntime
+          pip install onnx onnxruntime usd-core numpy
           python tools/build_int8.py --out models/int8
-      - name: Add the 8-bit model to the site
+          python tools/build_body.py --out models/body
+      - name: Add the built models to the site
         run: |
           mkdir -p _site/models
-          cp -r models/int8 _site/models/
+          cp -r models/int8 models/body _site/models/
       # Pages must be enabled once with Source "GitHub Actions"
       # (Settings > Pages); a workflow token cannot turn it on.
       - uses: actions/configure-pages@v5
