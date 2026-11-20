@@ -51,7 +51,7 @@ single-threaded, still ahead of playback).
 
 ## Licences
 
-Code: to be decided by the owner. Third-party models and data keep their own
+Code: MIT ([LICENSE](LICENSE)). Third-party models and data keep their own
 terms: MotionBricks weights are under the NVIDIA Open Model Agreement, and
 NVIDIA's sample BVH clips are for evaluation only, so they are never committed
 to this repository.
