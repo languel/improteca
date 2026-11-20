@@ -152,19 +152,67 @@ Every played movement, its source, its transforms and the reason, plus every
 chance choice with its seed. The log replays a performance exactly and makes
 it explainable.
 
+### 3.7 Models, time scales and where they run
+
+Three loops at three speeds, each with the cheapest thing that does its job.
+Nothing slow sits inside a faster loop.
+
+| Loop | Rate | What decides | Runs as |
+| --- | --- | --- | --- |
+| **Motion** | 30 Hz playback, one generation per 0.6-1.9 s | How the body gets from here to the next targets | MotionBricks (380 MB, ONNX Runtime Web, WebGPU; WebAssembly fallback) |
+| **Choice** | once per segment (about 1 s) | Which movement next, transformed how | The improviser: plain JavaScript, seeded, logged. Later, optionally, a tiny learned next-move policy (kilobytes to a few MB) trained on sequences from the repertoire |
+| **Intention** | every few seconds, or when spoken to | What the dance is about now: tempo, level, energy, focus body part, relation to the partner, which material | A small multimodal model in a Web Worker that reads the prompt, the camera and sound, and writes structured intentions (JSON). Optional |
+| **Perception** | camera rate (15-30 Hz) | Where the partner is and what they do | MediaPipe Pose Landmarker (a few MB, real time on phones) |
+
+Why this split:
+
+- **MotionBricks already is the "how".** It needs targets, not decisions; giving
+  it good targets on time is the whole job of the layers above.
+- **Choices must be legible and seedable**, so the per-segment decision stays
+  code that logs its reasons. A learned policy can propose weights, but the
+  improviser makes and records the choice.
+- **A language/perception model is too slow and too large for the inner
+  loops**, but it is the right tool for intentions. LFM3 Omni (text, image and
+  audio in; about 2.6 GB for the browser graphs, per our earlier feasibility
+  notes) fits a Mac comfortably next to MotionBricks. On a phone, the two
+  together are likely too much memory, so intentions on phones come from a
+  lighter path: a small text-only model, or a hosted model (for example
+  Claude) when the user supplies a key. The intention format is the same
+  either way, so the choice of model is swappable.
+
+### 3.8 The phone camera
+
+The phone is a first-class device: it can **capture**, **drive** and **review**.
+
+- **Capture (teaching):** MediaPipe gives 33 body landmarks with 3D world
+  coordinates. A fitting step turns them into SOMA joint rotations (inverse
+  kinematics with joint limits, then smoothing), and the result enters the
+  repertoire like any clip. Positions alone are ambiguous for twist (forearm,
+  head), so twist is estimated from the hand and face landmarks where seen,
+  and otherwise kept neutral.
+- **Driving (interaction):** live landmarks become partner features
+  (position, speed, extension, level, which limb leads) that feed the
+  improviser's response modes (mirror, echo with delay, counter, follow,
+  keep distance). In mirror mode the fitted pose itself becomes the target.
+- **Review:** the same page plays back recorded performances and their logs.
+
+Phone limits to respect: memory (MotionBricks alone is 380 MB; WebGPU on iOS
+26 Safari and recent Android Chrome), heat during long sessions, and camera
+permission requiring HTTPS (GitHub Pages provides it).
+
 ## 4. Milestones
 
-1. **Inbetweener in the browser.** Load SOMA clips, pick key poses, chain
-   generations with the ported engine on WebGPU, render a mannequin.
-   Done when: port output matches NVIDIA's Python pipeline on the same inputs
-   (numeric tests), and chaining NVIDIA's own clips shows no popping.
+1. **Inbetweener in the browser.** Done: the engine port is tested against
+   NVIDIA's pipeline; chains of NVIDIA clips hand over without pops. Phone
+   layout, GitHub Pages, and mediathèque clips retargeted from CMU.
 2. **Repertoire.** Import a clip, split it into movements, compute
    descriptors, browse and name them, play any movement through the engine.
 3. **Improviser v1.** Seeded weighted walk, with mirror, retrograde, level and
    reorient. Runs indefinitely without repeating itself obviously. Logged.
-4. **Webcam.** Teach by showing (fit SOMA rotations), then live response
-   (mirror, echo, counter).
-5. **Prompt.** Language to intentions.
+4. **Phone camera.** MediaPipe in the page: teach by showing (fit SOMA
+   rotations), then live response (mirror, echo, counter).
+5. **Intentions.** Prompt to intentions; then the multimodal model (LFM3 Omni
+   on a Mac) reading camera and sound into the same intentions.
 6. **Score.** Written sequences and notation-inspired timelines.
 7. Richer transforms (transfer, inscription), skinned characters, duets.
 
@@ -183,8 +231,14 @@ it explainable.
 - **Teaching data licences.** NVIDIA's sample clips are evaluation-only: fine
   for testing locally, never committed or published. Teaching material for
   published performances must be openly licensed or the user's own.
-- **Browser requirements.** WebGPU on desktop Chrome or Edge, and a model
-  download of about 380 MB (FP16) on first use. An 8-bit variant is smaller.
+- **Browser requirements.** WebGPU (desktop Chrome or Edge, Safari 26, recent
+  Android Chrome), and a model download of about 380 MB (FP16) on first use.
+  An 8-bit variant would halve that, which matters most on phones.
+- **Handover smoothness with retargeted material.** Retargeted CMU dance
+  hands over a little more sharply than NVIDIA's own clips (2.0x versus 1.75x
+  the motion's 99th-percentile acceleration). Candidates: give the model all
+  four target poses (velocity), prefer calmer moments of a clip as targets,
+  or blend a few frames across each handover.
 - **Prompting has limits.** A prompt can only steer within what the dancer has
   been taught. Brand-new movement from text would need a text-to-motion model
   (ARDY or Kimodo on a server) as a separate "teacher" that adds clips to the
