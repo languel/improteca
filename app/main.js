@@ -63,6 +63,7 @@ async function boot() {
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => performer.setColor(performerColor()));
   performer.setPose(state.skeleton.reference);
   bindUI();
+  if (matchMedia('(max-width: 760px)').matches) $('poses-details').open = false;
   renderPoses();
   renderStats();
   requestAnimationFrame(frame);
@@ -392,6 +393,23 @@ function blendFrames(poses, f0, f1, b, J) {
   return out;
 }
 
+async function quickStart() {
+  $('quick-start').disabled = true;
+  try {
+    if (!state.clips.length) {
+      $('load-samples').disabled = true;
+      await loadClipUrls(SAMPLES.map((p) => SAMPLES_BASE + p));
+    }
+    if (!state.engine) await loadModel(MODEL_URLS.fp16);
+    if (!state.engine || !state.clips.length) return;
+    randomTargets();
+    $('loop').checked = true;
+    play();
+  } finally {
+    $('quick-start').disabled = false;
+  }
+}
+
 // ---- UI --------------------------------------------------------------------
 
 function bindUI() {
@@ -418,6 +436,7 @@ function bindUI() {
     renderPoses();
   });
   $('random-targets').addEventListener('click', () => randomTargets());
+  $('quick-start').addEventListener('click', quickStart);
   $('play').addEventListener('click', play);
   $('stop').addEventListener('click', stop);
   $('ghosts').addEventListener('change', updateGhosts);

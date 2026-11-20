@@ -20,6 +20,8 @@
     <header>
       <h1>improteca</h1>
       <p class="sub">Inbetweener: generate motion through poses with NVIDIA MotionBricks, in the browser.</p>
+      <button id="quick-start" class="primary wide">Quick start</button>
+      <p class="hint">Loads the model (380 MB once, then cached) and sample clips, makes random targets and plays in a loop.</p>
     </header>
 
     <section>
@@ -43,9 +45,11 @@
     </section>
 
     <section>
-      <h2>Poses</h2>
-      <p class="hint">Start, then targets in order. Each is a moment of a clip placed on the floor.</p>
-      <ol id="poses" class="poses"></ol>
+      <details id="poses-details" open>
+        <summary><h2>Poses</h2></summary>
+        <p class="hint">Start, then targets in order. Each is a moment of a clip placed on the floor.</p>
+        <ol id="poses" class="poses"></ol>
+      </details>
       <div class="row">
         <button id="add-target">Add target</button>
         <button id="random-targets" title="Replace targets with random moments from the loaded clips">Random targets</button>
