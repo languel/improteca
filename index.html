@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>improteca inbetweener</title>
+  <link rel="stylesheet" href="app/style.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.187.0/examples/jsm/",
+      "onnxruntime-web": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/ort.webgpu.min.mjs"
+    }
+  }
+  </script>
+</head>
+<body>
+  <aside id="panel">
+    <header>
+      <h1>improteca</h1>
+      <p class="sub">Inbetweener: generate motion through poses with NVIDIA MotionBricks, in the browser.</p>
+    </header>
+
+    <section>
+      <h2>Model</h2>
+      <p id="model-status" class="status">Not loaded. MotionBricks SOMA, FP16, 380 MB (cached after the first load).</p>
+      <div class="progress" hidden><div id="model-progress"></div></div>
+      <div class="row">
+        <button id="load-model" class="primary">Load model</button>
+        <label class="file">Local .onnx…<input id="model-file" type="file" accept=".onnx"></label>
+      </div>
+    </section>
+
+    <section>
+      <h2>Clips</h2>
+      <p class="hint">SOMA-skeleton BVH clips. NVIDIA's samples are for evaluation only and load straight from their repository.</p>
+      <div class="row">
+        <label class="file">Open BVH…<input id="clip-files" type="file" accept=".bvh" multiple></label>
+        <button id="load-samples">NVIDIA samples</button>
+      </div>
+      <ul id="clips" class="list"></ul>
+    </section>
+
+    <section>
+      <h2>Poses</h2>
+      <p class="hint">Start, then targets in order. Each is a moment of a clip placed on the floor.</p>
+      <ol id="poses" class="poses"></ol>
+      <div class="row">
+        <button id="add-target">Add target</button>
+        <button id="random-targets" title="Replace targets with random moments from the loaded clips">Random targets</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Play</h2>
+      <div class="row">
+        <button id="play" class="primary" disabled>Play</button>
+        <button id="stop" disabled>Stop</button>
+        <label class="check"><input id="loop" type="checkbox"> Loop</label>
+        <label class="check"><input id="ghosts" type="checkbox" checked> Show poses</label>
+        <label class="check"><input id="follow" type="checkbox" checked> Follow</label>
+      </div>
+      <dl id="stats" class="stats"></dl>
+    </section>
+  </aside>
+  <main id="viewport" aria-label="Stage"></main>
+  <script type="module" src="app/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,118 @@
+:root {
+  --bg: #f7f5f0;
+  --panel: #fbfaf7;
+  --text: #22201c;
+  --muted: #6d675d;
+  --line: #e2ddd3;
+  --accent: #c8553d;
+  --accent-text: #ffffff;
+  --field: #ffffff;
+  --stage-bg: #ece9e2;
+  --stage-floor: #e2ded5;
+  --stage-grid: #cfc9bd;
+  --performer: #2f2c28;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #171614;
+    --panel: #1d1c19;
+    --text: #ece8e0;
+    --muted: #a39d92;
+    --line: #34312c;
+    --accent: #e0745c;
+    --accent-text: #1a1310;
+    --field: #262420;
+    --stage-bg: #1f1e1b;
+    --stage-floor: #282622;
+    --stage-grid: #3a3732;
+    --performer: #efe9de;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #171614; --panel: #1d1c19; --text: #ece8e0; --muted: #a39d92; --line: #34312c;
+  --accent: #e0745c; --accent-text: #1a1310; --field: #262420;
+  --stage-bg: #1f1e1b; --stage-floor: #282622; --stage-grid: #3a3732; --performer: #efe9de; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  display: grid;
+  grid-template-columns: 340px 1fr;
+}
+#panel {
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+  padding: 16px;
+  min-width: 0;
+}
+#viewport { position: relative; min-width: 0; min-height: 0; }
+#viewport canvas { display: block; width: 100%; height: 100%; }
+
+h1 { font-size: 20px; margin: 0; letter-spacing: 0.01em; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 8px; }
+.sub, .hint, .status { color: var(--muted); margin: 4px 0 10px; }
+.hint { font-size: 12.5px; }
+section { border-top: 1px solid var(--line); padding: 14px 0; }
+header { padding-bottom: 12px; }
+
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+button, .file {
+  font: inherit;
+  border: 1px solid var(--line);
+  background: var(--field);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 11px;
+  cursor: pointer;
+}
+button:disabled { opacity: 0.45; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+.file input { display: none; }
+.check { display: inline-flex; gap: 5px; align-items: center; color: var(--muted); }
+
+.progress { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-bottom: 10px; }
+.progress div { height: 100%; width: 0; background: var(--accent); transition: width 0.2s; }
+
+.list { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12.5px; color: var(--muted); }
+.list li { padding: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.poses { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 8px; }
+.pose {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+  background: var(--field);
+}
+.pose.selected { border-color: var(--accent); }
+.pose .head { display: flex; align-items: center; gap: 6px; }
+.pose .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.pose .name { font-weight: 600; flex: 1; }
+.pose .head button { padding: 1px 7px; }
+.pose label { display: grid; grid-template-columns: 54px 1fr 46px; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.pose select, .pose input[type="number"] {
+  font: inherit; font-size: 12px; width: 100%; min-width: 0;
+  background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px;
+}
+.pose input[type="range"] { width: 100%; min-width: 0; accent-color: var(--accent); }
+.pose .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.pose .grid3 label { grid-template-columns: auto 1fr; }
+.pose output { text-align: right; font-variant-numeric: tabular-nums; }
+
+.stats { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 12px 0 0; font-size: 12.5px; }
+.stats dt { color: var(--muted); }
+.stats dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 760px) {
+  body { grid-template-columns: 1fr; grid-template-rows: 55vh auto; }
+  #viewport { grid-row: 1; }
+  #panel { grid-row: 2; border-right: 0; border-top: 1px solid var(--line); padding: 12px 16px; }
+}

@@ -1,6 +1,6 @@
 # Design
 
-Status: first draft, November 2026. Nothing is built yet.
+Status: first draft, November 2026. Milestone 1 (the Inbetweener) is built; see the README.
 
 ## 1. What we are building
 
