@@ -21,7 +21,7 @@
       <h1>improteca</h1>
       <p class="sub">Inbetweener: generate motion through poses with NVIDIA MotionBricks, in the browser.</p>
       <button id="quick-start" class="primary wide">Quick start</button>
-      <p class="hint">Loads the model (380 MB once, then cached) and sample clips, makes random targets and plays in a loop.</p>
+      <p class="hint">Loads the model (380 MB once, then cached) and dance clips from the mediathèque, makes random targets and plays in a loop.</p>
     </header>
 
     <section>
@@ -36,12 +36,20 @@
 
     <section>
       <h2>Clips</h2>
-      <p class="hint">SOMA-skeleton BVH clips. NVIDIA's samples are for evaluation only and load straight from their repository.</p>
+      <p class="hint">BVH on the SOMA skeleton (used as is) or the CMU skeleton (retargeted onto SOMA). NVIDIA's samples are for evaluation only and load straight from their repository.</p>
       <div class="row">
         <label class="file">Open BVH…<input id="clip-files" type="file" accept=".bvh" multiple></label>
         <button id="load-samples">NVIDIA samples</button>
       </div>
       <ul id="clips" class="list"></ul>
+    </section>
+
+    <section>
+      <details id="mediatheque">
+        <summary><h2>Mediathèque</h2></summary>
+        <p class="hint">Motion capture from <a href="https://languel.github.io/mediatheque/" target="_blank" rel="noopener">languel/mediatheque</a>. Tap a clip to add it.</p>
+        <ul id="catalog" class="catalog"></ul>
+      </details>
     </section>
 
     <section>

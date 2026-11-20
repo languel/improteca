@@ -13,6 +13,7 @@ import { SomaEngine, SAMPLE_RATE } from '../src/engine/soma.js';
 import { sampleWindow, Inbetweener } from '../src/engine/inbetweener.js';
 import { placement, TF, qmul, qinv, qToAxisAngle } from '../src/engine/math.js';
 import { ortRunner } from '../src/engine/ort.js';
+import { retarget } from '../src/engine/retarget.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const FIXTURE = `${root}local/fixtures/reference.json`;
@@ -37,15 +38,14 @@ function angle(a, ao, b, bo) {
   return 4 * Math.asin(Math.min(1, Math.sqrt(d2) / 2));
 }
 
-test('a long chain plays without pops at handovers', { skip, timeout: 600_000 }, async () => {
+async function chainCheck(label, loadClips, limit) {
   const fx = JSON.parse(readFileSync(FIXTURE, 'utf8'));
   const skeleton = Skeleton.fromJSON(fx.skeleton);
   const J = skeleton.numJoints;
   const ort = await import('onnxruntime-node');
   const session = await ort.InferenceSession.create(MODEL, { executionProviders: ['cpu'] });
   const engine = new SomaEngine({ skeleton, modelJointNames: fx.model_joint_names, run: ortRunner(ort, session) });
-  const clips = Object.fromEntries(Object.entries(fx.clips).map(([k, f]) =>
-    [k, parseBVH(readFileSync(CLIPS + f, 'utf8'), { skeleton })]));
+  const clips = loadClips(fx, skeleton);
 
   // Twelve targets across all four clips, turning and travelling.
   const names = Object.keys(clips);
@@ -57,7 +57,7 @@ test('a long chain plays without pops at handovers', { skip, timeout: 600_000 },
     targets.push({ poses: sampleWindow(clip, t, placement(1.5 * Math.cos(a), 1.5 * Math.sin(a), a + 1), 0), numPoses: 1 + (i % 4) });
   }
   const player = new Inbetweener(engine);
-  player.reset(sampleWindow(clips.idle, 1, placement(0, 0, 0), 3));
+  player.reset(sampleWindow(Object.values(clips)[0], 1, placement(0, 0, 0), 3));
 
   // Record the played frames, marking each handover.
   const played = [];
@@ -93,12 +93,26 @@ test('a long chain plays without pops at handovers', { skip, timeout: 600_000 },
     report.push(`${name.padEnd(13)} max speed ${speed.toFixed(1)} rad/s; acceleration p99 ${(p99 * SAMPLE_RATE * SAMPLE_RATE).toFixed(0)}, ` +
       `worst handover ${(atHandover * SAMPLE_RATE * SAMPLE_RATE).toFixed(0)} rad/s² (${ratio.toFixed(2)}x)`);
   }
-  console.log(`  ${played.length} frames (${(played.length / SAMPLE_RATE).toFixed(1)} s), ${handovers.length} handovers`);
+  console.log(`  ${label}: ${played.length} frames (${(played.length / SAMPLE_RATE).toFixed(1)} s), ${handovers.length} handovers`);
   report.forEach((r) => console.log(`  ${r}`));
   // A pop would be a handover acceleration well beyond the motion's own sharp
   // moments. Measured baseline with NVIDIA's pipeline on this chain: up to
   // 1.75x (neck), mild kinks rather than pops. An eased endpoint correction
   // was tried and did not help (legs got worse), so the kink comes from the
   // model's first frames. This guards against regressions.
-  assert.ok(worstRatio < 2, `a handover's acceleration is ${worstRatio.toFixed(2)}x the 99th percentile`);
-});
+  assert.ok(worstRatio < limit, `${label}: a handover's acceleration is ${worstRatio.toFixed(2)}x the 99th percentile`);
+}
+
+test('a long chain of NVIDIA clips plays without pops at handovers', { skip, timeout: 600_000 }, () =>
+  chainCheck('NVIDIA clips', (fx, skeleton) => Object.fromEntries(Object.entries(fx.clips).map(([k, f]) =>
+    [k, parseBVH(readFileSync(CLIPS + f, 'utf8'), { skeleton })])), 2));
+
+const CMU = ['cmu-everyday-waiting-idle-139-02', 'cmu-ballet-pirouette-05-02', 'cmu-ballet-arabesque-05-03',
+  'cmu-dance-arching-arms-49-12', 'cmu-dance-balance-tilt-49-22', 'cmu-ballet-pointe-tendue-05-12'];
+const haveCMU = CMU.every((id) => existsSync(`${CLIPS}${id}.bvh`));
+test('a long chain of retargeted CMU dance plays without pops at handovers', { skip: skip || (!haveCMU && 'CMU clips missing'), timeout: 600_000 }, () =>
+  chainCheck('CMU dance', (fx, skeleton) => Object.fromEntries(CMU.map((id) =>
+    [id, retarget(parseBVH(readFileSync(`${CLIPS}${id}.bvh`, 'utf8')), skeleton)])),
+  // Measured baseline: up to 2.04x (left leg; arms 1.7-1.8x), a little sharper
+  // than NVIDIA's own clips. Something to improve; this guards regressions.
+  2.5));

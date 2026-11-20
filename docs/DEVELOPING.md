@@ -9,6 +9,7 @@ src/engine/   the motion engine: a port of NVIDIA's MotionBricks SOMA runtime
   bvh.js          BVH clips, sampling, remapping onto the SOMA skeleton
   soma.js         encode poses for the model, decode its output, endpoint correction
   inbetweener.js  the generate / play / feed-back loop of NVIDIA's Inbetweener demo
+  retarget.js     CMU (and other) BVH onto the SOMA skeleton
   ort.js          ONNX Runtime adapter (web or node) and the model URLs
 assets/soma/  the SOMA skeleton (names, parents, rest pose)
 reference/    a script that runs NVIDIA's own pipeline on CPU to make test fixtures
@@ -42,6 +43,12 @@ things, and skip without them:
    from `assets/motions/soma/` in [NVlabs/motionbricks](https://github.com/NVlabs/motionbricks)
    (Git LFS; the media URL pattern above works for them too).
 
+   For the retarget and CMU smoothness tests, also these mediathèque clips as
+   `local/clips/<id>.bvh`, from `https://languel.github.io/mediatheque/items/<id>/motion.bvh`:
+   `cmu-everyday-waiting-idle-139-02`, `cmu-ballet-pirouette-05-02`,
+   `cmu-ballet-arabesque-05-03`, `cmu-dance-arching-arms-49-12`,
+   `cmu-dance-balance-tilt-49-22`, `cmu-ballet-pointe-tendue-05-12`.
+
 3. **Reference fixtures**, `local/fixtures/reference.json`, made by running
    NVIDIA's own Warp kernels on the CPU with ONNX Runtime in place of
    TensorRT (no GPU needed; works on a Mac):
@@ -71,5 +78,11 @@ things, and skip without them:
   (neck; arms 1.5x). These are mild kinks, not pops. An eased endpoint
   correction was tried and did not help, so the kink comes from the model's
   first frames rather than the correction.
+- **Retargeting CMU.** Every mapped bone points exactly as in the source on
+  every frame (calibrated world-rotation transfer; twist carried over), feet
+  on the floor. Chains through retargeted CMU dance hand over a little more
+  sharply than NVIDIA's own clips: up to 2.0x the 99th-percentile
+  acceleration (left leg; arms 1.7-1.8x) versus 1.75x. Mild, but worth
+  improving.
 - **Speed.** About 40 to 60 ms per generation with ONNX Runtime on CPU (4
   cores), for 1.6 to 1.9 s of motion.

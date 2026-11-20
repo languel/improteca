@@ -9,6 +9,7 @@ import { Stage, Mannequin } from './stage.js';
 import { fetchModel, openSession } from './model.js';
 import { Skeleton } from '../src/engine/skeleton.js';
 import { parseBVH } from '../src/engine/bvh.js';
+import { bvhToSoma } from '../src/engine/retarget.js';
 import { SomaEngine, SAMPLE_RATE, POSES_PER_TOKEN, MIN_TOKENS, MAX_TOKENS } from '../src/engine/soma.js';
 import { Inbetweener, sampleWindow } from '../src/engine/inbetweener.js';
 import { placement, TF } from '../src/engine/math.js';
@@ -27,6 +28,11 @@ const SAMPLES = [
   'locomotion/idle/warm_up_neck_001__A359.bvh',
   'variations/angry_combat_quickstep_ff_idle_090_R_001__A365.bvh',
 ];
+
+const MEDIATHEQUE = 'https://languel.github.io/mediatheque/';
+const DANCE = ['cmu-everyday-waiting-idle-139-02', 'cmu-ballet-pirouette-05-02', 'cmu-ballet-arabesque-05-03',
+  'cmu-dance-arching-arms-49-12', 'cmu-dance-balance-tilt-49-22', 'cmu-ballet-pointe-tendue-05-12',
+  'cmu-dance-side-arabesque-49-09', 'cmu-ballet-retire-balance-05-14'];
 
 const state = {
   skeleton: null,
@@ -117,10 +123,10 @@ async function loadModel(source) {
 // ---- clips -----------------------------------------------------------------
 
 function addClip(name, text) {
-  const clip = parseBVH(text, { skeleton: state.skeleton });
+  const { clip, method } = bvhToSoma(text, state.skeleton, parseBVH);
   state.clips.push({ name, clip });
   const li = document.createElement('li');
-  li.textContent = `${name} · ${clip.duration.toFixed(1)} s`;
+  li.textContent = `${name} · ${clip.duration.toFixed(1)} s · ${method}`;
   $('clips').append(li);
   if (state.poses.length === 0) {
     // A first start and target so there is something to play.
@@ -131,12 +137,12 @@ function addClip(name, text) {
   updateButtons();
 }
 
-async function loadClipUrls(urls) {
-  for (const url of urls) {
+async function loadClipUrls(urls, names = []) {
+  for (const [i, url] of urls.entries()) {
     try {
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      addClip(url.split('/').pop().replace(/\.bvh$/i, ''), await res.text());
+      addClip(names[i] || url.split('/').pop().replace(/\.bvh$/i, ''), await res.text());
     } catch (err) {
       console.error(err);
       $('model-status').textContent = `Could not load ${url}: ${err.message}`;
@@ -393,12 +399,59 @@ function blendFrames(poses, f0, f1, b, J) {
   return out;
 }
 
+// ---- mediathèque -------------------------------------------------------------
+
+let catalog = null;
+async function loadCatalog() {
+  if (catalog) return catalog;
+  const res = await fetch(MEDIATHEQUE + 'catalog.json');
+  if (!res.ok) throw new Error(`Mediathèque catalog: HTTP ${res.status}`);
+  catalog = (await res.json()).filter((item) => item.bvh);
+  return catalog;
+}
+
+const shortTitle = (item) => item.title.replace(/\s*\(CMU Mocap [^)]*\)\s*$/, '');
+
+async function showCatalog() {
+  const list = $('catalog');
+  if (list.childElementCount) return;
+  try {
+    for (const item of await loadCatalog()) {
+      const li = document.createElement('li');
+      const b = document.createElement('button');
+      b.title = item.summary || item.title;
+      b.setAttribute('aria-pressed', 'false');
+      b.innerHTML = `<img loading="lazy" alt="" src="${MEDIATHEQUE + item.thumb}"><span></span>`;
+      b.querySelector('span').textContent = shortTitle(item);
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        await loadClipUrls([MEDIATHEQUE + item.bvh], [shortTitle(item)]);
+        b.setAttribute('aria-pressed', 'true');
+      });
+      li.append(b);
+      list.append(li);
+    }
+  } catch (err) {
+    list.textContent = err.message;
+  }
+}
+
+async function loadDance() {
+  const items = await loadCatalog();
+  const chosen = DANCE.map((id) => items.find((i) => i.id === id)).filter(Boolean);
+  await loadClipUrls(chosen.map((i) => MEDIATHEQUE + i.bvh), chosen.map(shortTitle));
+}
+
 async function quickStart() {
   $('quick-start').disabled = true;
   try {
     if (!state.clips.length) {
-      $('load-samples').disabled = true;
-      await loadClipUrls(SAMPLES.map((p) => SAMPLES_BASE + p));
+      try {
+        await loadDance();
+      } catch (err) {
+        console.warn(err);
+        await loadClipUrls(SAMPLES.map((p) => SAMPLES_BASE + p));
+      }
     }
     if (!state.engine) await loadModel(MODEL_URLS.fp16);
     if (!state.engine || !state.clips.length) return;
@@ -437,6 +490,7 @@ function bindUI() {
   });
   $('random-targets').addEventListener('click', () => randomTargets());
   $('quick-start').addEventListener('click', quickStart);
+  $('mediatheque').addEventListener('toggle', () => $('mediatheque').open && showCatalog());
   $('play').addEventListener('click', play);
   $('stop').addEventListener('click', stop);
   $('ghosts').addEventListener('change', updateGhosts);
