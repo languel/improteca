@@ -1,0 +1,5 @@
+node_modules/
+.DS_Store
+# Model weights and evaluation-only sample data are never committed.
+*.onnx
+local/
