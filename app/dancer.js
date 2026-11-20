@@ -351,12 +351,39 @@ function fillEntry(el, e) {
   el.querySelector('.why').textContent = `· ${e.transforms.length ? e.transforms.join(', ') : 'as learned'} · ${e.reasons.join(', ')}`;
 }
 
+function renderPhrases(current) {
+  const mem = state.improviser.memory();
+  const form = $('form');
+  form.replaceChildren();
+  mem.form.forEach((label, i) => {
+    if (i) form.append(' · ');
+    const span = document.createElement('span');
+    span.textContent = label;
+    if (i === mem.form.length - 1 && current) span.className = 'current';
+    form.append(span);
+  });
+  if (!mem.form.length) form.textContent = '—';
+  $('motifs').replaceChildren(...mem.motifs.map((mo) => {
+    const li = document.createElement('li');
+    li.textContent = `${mo.name}: ${mo.items.join(' + ') || '…'}`;
+    li.title = li.textContent;
+    return li;
+  }));
+}
+
 function showNow(e) {
   const now = $('now');
   now.replaceChildren();
   const p = document.createElement('p');
   fillEntry(p, e);
+  if (e.phrase) {
+    const tag = document.createElement('span');
+    tag.className = 'phrase';
+    tag.textContent = e.phrase;
+    p.prepend(tag);
+  }
   now.append(p);
+  renderPhrases(true);
   const li = document.createElement('li');
   fillEntry(li, e);
   $('log').prepend(li);
@@ -467,6 +494,7 @@ function exportLog() {
     prompts: state.history,
     repertoire: state.sources.map((s) => ({ id: s.id, name: s.name, credit: s.credit })),
     choices: state.improviser.log,
+    phrases: state.improviser.memory(),
   };
   const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
   const a = document.createElement('a');

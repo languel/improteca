@@ -157,3 +157,8 @@ textarea { resize: vertical; min-height: 64px; }
 footer { border-top: 1px solid var(--line); padding-top: 12px; }
 
 h3 { font-size: 13px; margin: 14px 0 6px; }
+
+.form { font-size: 13px; line-height: 1.7; margin: 6px 0; }
+.form span { white-space: nowrap; }
+.form .current { color: var(--accent); font-weight: 600; }
+.now .phrase { display: inline-block; font-size: 12px; font-weight: 600; color: var(--accent); margin-right: 6px; }

@@ -14,6 +14,7 @@ src/engine/   the motion engine: a port of NVIDIA's MotionBricks SOMA runtime
 src/dancer/   the dancer
   repertoire.js   split clips into movements; descriptors; key moments
   improviser.js   choose, transform and place the next movement; the log
+  composer.js     phrase memory: state, develop and return to motifs
   transforms.js   mirror (exact, with SOMA's rest frames) and placement
   intentions.js   prompt -> intentions with a built-in movement vocabulary
   llm.js          prompt -> intentions with Claude (optional, user's own key)
@@ -104,3 +105,9 @@ things, and skip without them:
   exactly (test); the spine is approximated by the straight hip-to-shoulder
   line (about 7°). Light smoothing (±1 frame at 15 fps) costs about 2° on fast
   movement in exchange for less detector jitter.
+- **Phrase memory.** Each development operation transforms the motif as named
+  (mirrored, reversed with each movement backwards, accumulated as
+  1; 1 2; 1 2 3, fragments from the start, one movement varied), checked
+  in tests. With "repetitive", at least a third of the steps develop motifs;
+  "unpredictable" raises the share of new material. A new prompt starts a new
+  motif and keeps the old ones.

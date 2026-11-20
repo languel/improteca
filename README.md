@@ -29,6 +29,12 @@ replayed from its seed.
   described (level, size, energy, travel, turning, jumps, which part leads).
 - **Improviser**: chooses by intention, continuity with the current pose and
   novelty; mirrors, reverses, re-tempos and keeps the dancer on stage.
+- **Phrase memory**: the dancer composes in sections. It states motifs (A, B,
+  …) and develops them: repeat, mirror, retrograde, fragment, accumulate
+  (1; 1 2; 1 2 3), vary, slower, faster, and returns to earlier ones. Low
+  variety ("repetitive") develops more; high ("unpredictable") invents more.
+  The page shows the form as it unfolds, e.g. `A · A backwards · A mirrored ·
+  A varied · B`.
 - **Films**: the dancer can watch a film from the mediathèque (Sandow, Muybridge,
   dancers of 1887...) or your own video, estimate the pose with MediaPipe, fit
   its body to it and learn the movement. One camera: depth is approximate,

@@ -128,10 +128,106 @@ test('prompts steer the choices', { skip }, () => {
   assert.equal(noBallet.filter((c) => c.m.tags.includes('ballet')).length, 0, 'avoid');
 });
 
-test('the dancer stays on stage and does not loop one movement', { skip }, () => {
+test('the dancer stays on stage and keeps finding material', { skip }, () => {
   const run = improvise(parsePrompt('travel across the space').intentions, 9, 40);
   for (const c of run) assert.ok(Math.hypot(...c.root) < 4.5, `left the stage at ${c.root}`);
-  for (let i = 1; i < run.length; i++) assert.notEqual(run[i].entry.movement, run[i - 1].entry.movement);
+  assert.ok(new Set(run.map((c) => c.entry.movement)).size >= 10, 'stuck on a few movements');
+});
+
+// ---- phrase memory -----------------------------------------------------------------
+
+function composed(prompt, seed, steps = 40) {
+  const imp = new Improviser({ skeleton: soma, movements: movements(), seed });
+  imp.setIntentions(parsePrompt(prompt).intentions);
+  let pose = null;
+  const entries = [];
+  for (let i = 0; i < steps; i++) {
+    const { targets, entry } = imp.next(pose);
+    pose = targets[targets.length - 1].poses.slice(0, J * TF);
+    entries.push(entry);
+  }
+  return { imp, entries };
+}
+
+test('motifs are stated, remembered and developed', { skip }, () => {
+  const { imp, entries } = composed('slow and expansive, repetitive', 4);
+  const mem = imp.memory();
+  assert.ok(mem.motifs.length >= 1 && mem.motifs[0].items.length >= 2);
+  const developed = entries.filter((e) => e.reasons[0] && !/^stating|^digression/.test(e.reasons[0]));
+  assert.ok(developed.length >= entries.length / 3, `only ${developed.length} of ${entries.length} steps develop a motif`);
+  // A developed section dances the motif's own movements.
+  const A = imp.composer.motifs[0];
+  const againOrAccum = entries.filter((e) => /^(A again|A accumulating|fragment of A|A slower|A faster)/.test(e.phrase || ''));
+  for (const e of againOrAccum) assert.ok(A.items.some((it) => it.id === e.movement), `${e.phrase} danced ${e.movement}`);
+});
+
+test('development operations transform the motif as named', { skip }, () => {
+  // Drive the composer directly, so every operation can be checked.
+  const imp = new Improviser({ skeleton: soma, movements: movements(), seed: 2 });
+  imp.setIntentions({ variety: 0.5 });
+  const c = imp.composer;
+  c.next(imp); // establishes the idea
+  const ms = movements();
+  const motif = { name: 'A', key: c.key, uses: 0, items: [0, 5, 9].map((i) => ({ id: ms[i].id, mirrored: false, retro: false })) };
+  c.motifs = [motif];
+  c.plan = [];
+  const seen = new Set();
+  for (let tries = 0; tries < 400 && seen.size < 7; tries++) {
+    const plan = c.section(imp, () => true);
+    const label = plan[0].phrase;
+    // Keep developing A: forget motifs stated by the test loop (never danced here).
+    c.motifs = [motif];
+    const ids = plan.map((p) => p.item?.id);
+    if (label === 'A mirrored') {
+      assert.ok(plan.every((p) => p.item.mirrored));
+      seen.add('mirror');
+    } else if (label === 'A backwards') {
+      assert.deepEqual(ids, motif.items.map((it) => it.id).reverse());
+      assert.ok(plan.every((p) => p.item.retro));
+      seen.add('retrograde');
+    } else if (label === 'A accumulating') {
+      const m = motif.items.map((it) => it.id);
+      assert.deepEqual(ids, [m[0], m[0], m[1], m[0], m[1], m[2]]);
+      seen.add('accumulate');
+    } else if (label === 'fragment of A') {
+      assert.deepEqual(ids, motif.items.slice(0, ids.length).map((it) => it.id));
+      assert.ok(ids.length < 3);
+      seen.add('fragment');
+    } else if (label === 'A varied') {
+      assert.equal(plan.filter((p) => p.item.vary).length, 1);
+      seen.add('vary');
+    } else if (label === 'A slower') {
+      assert.ok(plan.every((p) => p.tempo < 1));
+      seen.add('slower');
+    } else if (label === 'A again') {
+      assert.deepEqual(ids, motif.items.map((it) => it.id));
+      seen.add('repeat');
+    }
+  }
+  assert.ok(seen.size >= 7, `operations seen: ${[...seen]}`);
+});
+
+test('a new prompt starts a new motif; variety sets how much is new', { skip }, () => {
+  const imp = new Improviser({ skeleton: soma, movements: movements(), seed: 6 });
+  imp.setIntentions(parsePrompt('calm').intentions);
+  let pose = null;
+  const step = () => {
+    const { targets, entry } = imp.next(pose);
+    pose = targets[targets.length - 1].poses.slice(0, J * TF);
+    return entry;
+  };
+  for (let i = 0; i < 8; i++) step();
+  const before = imp.composer.motifs.length;
+  imp.setIntentions(parsePrompt('vigorous ballet').intentions);
+  assert.match(step().reasons[0], /^stating /);
+  assert.equal(imp.composer.motifs.length, before + 1);
+
+  const share = (prompt) => {
+    let stated = 0;
+    for (const seed of [1, 2, 3]) stated += composed(prompt, seed, 30).entries.filter((e) => /^stating|^digression/.test(e.reasons[0])).length;
+    return stated / 90;
+  };
+  assert.ok(share('repetitive') + 0.15 < share('unpredictable'), 'variety should raise the share of new material');
 });
 
 // ---- video pose fitting ---------------------------------------------------------------

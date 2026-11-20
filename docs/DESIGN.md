@@ -210,7 +210,9 @@ permission requiring HTTPS (GitHub Pages provides it).
 3. **Improviser v1.** Done: seeded choice by intention, continuity and novelty;
    mirror, retrograde, tempo, reorientation to stay on stage; logged with
    reasons. Prompt to intentions (built-in vocabulary, optional Claude) is in
-   place too, ahead of milestone 5.
+   place too, ahead of milestone 5. Phrase memory (v1): motifs are stated,
+   remembered and developed (repeat, mirror, retrograde, fragment,
+   accumulate, vary, tempo), with returns to earlier motifs.
 4. **Phone camera.** MediaPipe in the page: teach by showing (fit SOMA
    rotations), then live response (mirror, echo, counter).
 5. **Intentions.** Prompt to intentions; then the multimodal model (LFM3 Omni

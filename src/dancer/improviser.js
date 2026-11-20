@@ -14,6 +14,7 @@ import { TF, tf, tmul, qFromAxisAngle } from '../engine/math.js';
 import { SAMPLE_RATE, POSES_PER_TOKEN, MIN_TOKENS, MAX_TOKENS } from '../engine/soma.js';
 import { makeMirror, placePoses } from './transforms.js';
 import { mirrorShape, shapeOf, PARTS } from './repertoire.js';
+import { Composer } from './composer.js';
 
 /** Seeded random numbers (mulberry32). */
 export function rng(seed) {
@@ -102,6 +103,16 @@ export class Improviser {
     this.log = [];
     this.mirror = makeMirror(skeleton);
     this.step = 0;
+    this.composer = new Composer();
+  }
+
+  /** Phrase memory: motifs and the form so far (for display). */
+  memory() {
+    const name = (id) => this.movements.find((m) => m.id === id)?.name || id;
+    return {
+      motifs: this.composer.motifs.map((mo) => ({ name: mo.name, items: mo.items.map((it) => name(it.id)) })),
+      form: this.composer.form.slice(),
+    };
   }
 
   /** Learn more movements (e.g. while clips are still loading). */
@@ -163,37 +174,30 @@ export class Improviser {
     return { score, reasons };
   }
 
-  /**
-   * Choose and prepare the next movement.
-   * @param {Float64Array|null} pose  the dancer's current local pose (null at the start)
-   * @returns {{ targets: object[], entry: object }}
-   */
-  next(pose) {
-    const I = this.intentions;
-    const J = this.J;
+  /** Where the dancer is: body shape (for continuity) and ground placement. */
+  sense(pose) {
+    if (!pose) return { here: null, place: { x: 0, z: 0, heading: 0 } };
     const sk = this.skeleton;
-    let here = null;
-    let place = { x: 0, z: 0, heading: 0 };
-    if (pose) {
-      const w = sk.world(pose);
-      const hips = 0;
-      const rl = sk.jointIndex('RightLeg');
-      const ll = sk.jointIndex('LeftLeg');
-      const h = Math.atan2(w[rl * TF + 2] - w[ll * TF + 2], -(w[rl * TF] - w[ll * TF]));
-      const rel = {};
-      for (const k of Object.values(PARTS)) {
-        const o = sk.jointIndex(k) * TF;
-        rel[k] = [w[o] - w[hips], w[o + 1], w[o + 2] - w[hips + 2]];
-      }
-      here = shapeOf(rel, h);
-      place = { x: w[0], z: w[2], heading: h };
+    const w = sk.world(pose);
+    const rl = sk.jointIndex('RightLeg');
+    const ll = sk.jointIndex('LeftLeg');
+    const h = Math.atan2(w[rl * TF + 2] - w[ll * TF + 2], -(w[rl * TF] - w[ll * TF]));
+    const rel = {};
+    for (const k of Object.values(PARTS)) {
+      const o = sk.jointIndex(k) * TF;
+      rel[k] = [w[o] - w[0], w[o + 1], w[o + 2] - w[2]];
     }
+    return { here: shapeOf(rel, h), place: { x: w[0], z: w[2], heading: h } };
+  }
 
-    // Candidates.
+  /** Free choice: score every variant of every movement and sample one. */
+  choose(here, exclude = null) {
+    const I = this.intentions;
     const options = [];
     // "No ballet" means none: avoided material is left out (unless nothing else is known).
     const avoided = (m) => I.avoid?.some((t) => (m.tags || []).includes(t));
-    const pool = this.movements.some((m) => !avoided(m)) ? this.movements.filter((m) => !avoided(m)) : this.movements;
+    let pool = this.movements.some((m) => !avoided(m)) ? this.movements.filter((m) => !avoided(m)) : this.movements;
+    if (exclude) pool = pool.filter((m) => !exclude(m)).length ? pool.filter((m) => !exclude(m)) : pool;
     for (const m of pool) {
       for (const mirrored of [false, true]) {
         for (const retro of [false, true]) {
@@ -216,11 +220,84 @@ export class Improviser {
         break;
       }
     }
-    const chosen = options[pick];
-    const { m, v } = chosen;
+    return { ...options[pick], probability: weights[pick] / total, options: options.length };
+  }
+
+  /** The movement most like m (by its descriptors), for variations. */
+  relative(m, avoid = []) {
+    const keys = Object.keys(m.norm);
+    let best = null;
+    let bestD = Infinity;
+    for (const o of this.movements) {
+      if (o === m || avoid.includes(o.id)) continue;
+      let d = 0;
+      for (const k of keys) d += (o.norm[k] - m.norm[k]) ** 2;
+      if (o.lead !== m.lead) d += 0.05;
+      if (d < bestD) {
+        bestD = d;
+        best = o;
+      }
+    }
+    return best || m;
+  }
+
+  /**
+   * Choose and prepare the next movement. The composer decides whether this
+   * step states a new motif (free choice, remembered), develops a remembered
+   * one, or digresses (free choice, not remembered).
+   * @param {Float64Array|null} pose  the dancer's current local pose (null at the start)
+   * @returns {{ targets: object[], entry: object }}
+   */
+  next(pose) {
+    const { here, place } = this.sense(pose);
+    const step = this.composer.next(this);
+    let m;
+    let v;
+    let reasons;
+    let probability = 1;
+    let options = 1;
+    let score = 0;
+    const extra = [];
+    if (step.item) {
+      m = this.movements.find((x) => x.id === step.item.id);
+      v = { mirrored: step.item.mirrored, retro: step.item.retro };
+      if (step.item.vary) {
+        const original = m;
+        m = this.relative(m, this.recent.slice(-4));
+        extra.push(`in place of ${original.name}`);
+      }
+      reasons = [step.role];
+    } else {
+      const c = this.choose(here);
+      ({ m, v, probability, options, score } = c);
+      reasons = [step.role, ...(c.reasons.length ? c.reasons : ['chance'])];
+      if (step.record) step.record({ id: m.id, mirrored: v.mirrored, retro: v.retro });
+    }
     this.recent.push(m.id);
     if (this.recent.length > 24) this.recent.shift();
+    const { targets, transforms } = this.realise(m, v, place, step.tempo || 1);
+    const entry = {
+      step: ++this.step,
+      movement: m.id,
+      name: m.name,
+      source: m.source.name,
+      credit: m.source.credit || '',
+      phrase: step.phrase,
+      transforms: [...transforms, ...extra],
+      reasons,
+      score: +score.toFixed(2),
+      probability: +probability.toFixed(3),
+      options,
+      targets: targets.length,
+    };
+    this.log.push(entry);
+    return { targets, entry };
+  }
 
+  /** Turn a movement variant into MotionBricks targets placed at the dancer. */
+  realise(m, v, place, tempoScale = 1) {
+    const I = this.intentions;
+    const J = this.J;
     // Placement: the movement's first pose starts where the dancer is, facing
     // the dancer's way; near the edge, turn so its travel heads back inward.
     const transforms = [];
@@ -238,7 +315,6 @@ export class Improviser {
     };
     const dir = v.retro ? -1 : 1;
     const windows = keys.map((t) => sample(t, dir));
-    // Movement frame: first pose's ground position and heading.
     const first = windows[0];
     const fh = v.mirrored ? -startHeading : startHeading;
     let yaw = place.heading - fh;
@@ -262,7 +338,7 @@ export class Improviser {
     const placed = windows.map((w) => placePoses(w, J, T));
 
     // Tempo: token counts from the time between keys.
-    const tempo = I.tempo || 1;
+    const tempo = (I.tempo || 1) * tempoScale;
     if (Math.abs(tempo - 1) > 0.05) transforms.push(tempo > 1 ? `faster ×${tempo.toFixed(2)}` : `slower ×${(1 / tempo).toFixed(2)}`);
     const tokensFor = (gap) => {
       const frames = (gap * SAMPLE_RATE) / tempo;
@@ -274,23 +350,7 @@ export class Improviser {
       const range = i === 0 ? (tempo > 1.2 ? [6, 10] : tempo < 0.8 ? [10, 16] : [8, 14]) : tokensFor(Math.abs(keys[i] - keys[i - 1]));
       return { poses, numPoses: 4, tokens: rangeOf(range[0], range[1]), early: 0, movement: m.id };
     });
-
-    const reasons = chosen.reasons.length ? chosen.reasons : ['chance'];
-    const entry = {
-      step: ++this.step,
-      movement: m.id,
-      name: m.name,
-      source: m.source.name,
-      credit: m.source.credit || '',
-      transforms,
-      reasons,
-      score: +chosen.score.toFixed(2),
-      probability: +(weights[pick] / total).toFixed(3),
-      options: options.length,
-      targets: targets.length,
-    };
-    this.log.push(entry);
-    return { targets, entry };
+    return { targets, transforms };
   }
 }
 
