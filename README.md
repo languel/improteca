@@ -56,7 +56,8 @@ replayed from its seed.
   through them.
 
 Live at <https://languel.github.io/improteca/> once GitHub Pages is enabled.
-Architecture and plans: [docs/DESIGN.md](docs/DESIGN.md). Tests and how the
+Architecture and plans: [docs/DESIGN.md](docs/DESIGN.md); implementing Forsythe's
+Improvisation Technologies: [docs/IMPROVISATION_TECHNOLOGIES.md](docs/IMPROVISATION_TECHNOLOGIES.md). Tests and how the
 engine was checked against NVIDIA's own code: [docs/DEVELOPING.md](docs/DEVELOPING.md).
 
 ## Run
