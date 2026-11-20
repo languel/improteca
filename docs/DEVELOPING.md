@@ -9,7 +9,10 @@ src/engine/   the motion engine: a port of NVIDIA's MotionBricks SOMA runtime
   bvh.js          BVH clips, sampling, remapping onto the SOMA skeleton
   soma.js         encode poses for the model, decode its output, endpoint correction
   inbetweener.js  the generate / play / feed-back loop of NVIDIA's Inbetweener demo
-  retarget.js     CMU (and other) BVH onto the SOMA skeleton
+  retarget.js     CMU (and other) BVH onto the SOMA skeleton; glitch repair
+  limbs.js        two-bone arms and legs with true hinge elbows and knees; IK
+  constraints.js  adjustable biology and physics on played frames
+  audit.js        measures violations (hinges, ranges, floor, sliding, jerk)
   ort.js          ONNX Runtime adapter (web or node) and the model URLs
 src/dancer/   the dancer
   repertoire.js   split clips into movements; descriptors; key moments
@@ -125,3 +128,17 @@ things, and skip without them:
   WebAssembly. Not yet measured on WebGPU.
 - **The worker.** With the model on the main thread, 12 s of dancing on
   WebAssembly had 13 frames over 100 ms (up to 500 ms). In the worker: none.
+- **Biology and physics.** NVIDIA's SOMA data has elbows and knees as pure
+  hinges. Our CMU retarget used to copy CMU's forearm twist into the elbow,
+  which put targets outside the model's experience; limbs are now solved as
+  two-bone chains with true hinges (twist moves to the wrist), CMU's
+  calibration T-pose frame is skipped, and glitch frames (180-degree flips
+  from old marker swaps) are repaired. On a 40-second improvised dance
+  (`audit.js`), from raw output to output with the default constraints:
+  elbows/knees off their hinge in 26% of frames -> 0; over-bent or
+  hyperextended 1.9% -> 0; feet sliding while marked in contact 59% of
+  contact frames -> 32%; nothing below the floor. Handover smoothing (a
+  velocity offset that fades over 6 frames) brings the worst handover from
+  3.0x to 1.9x the motion's 99th-percentile acceleration, with no joint
+  faster than about 15 rad/s. Balance is optional (off by default): it
+  slightly increases foot sliding.

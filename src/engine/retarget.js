@@ -14,6 +14,82 @@
 
 import { TF, getTf, setTf, tf, tp, tq, tmul, qmul, qinv, qnormalize, qrot, cross } from './math.js';
 import { Clip } from './bvh.js';
+import { LIMBS, limbInfo, solveLimb } from './limbs.js';
+import { applyJointLimits } from './constraints.js';
+
+/** Does the clip start with a calibration pose (a big jump from frame 0 to 1, then calm)? */
+export function leadingCalibrationFrame(clip) {
+  if (clip.numFrames < 3) return false;
+  const J = clip.skeleton.numJoints;
+  const diff = (a, b) => {
+    let s = 0;
+    for (let j = 1; j < J; j++) {
+      let d = 0;
+      for (let k = 3; k < 7; k++) d += clip.poses[(a * J + j) * TF + k] * clip.poses[(b * J + j) * TF + k];
+      s += 2 * Math.acos(Math.min(1, Math.abs(d)));
+    }
+    return s / (J - 1);
+  };
+  return diff(0, 1) > 0.25 && diff(1, 2) < 0.1;
+}
+
+/** Interpolate across implausible jumps of any joint's local rotation (in place). */
+export function despike(skeleton, poses, frames, { jump = 1.2, settle = 0.6, window = 15 } = {}) {
+  const J = skeleton.numJoints;
+  const q = (f, j) => {
+    const o = (f * J + j) * TF + 3;
+    return [poses[o], poses[o + 1], poses[o + 2], poses[o + 3]];
+  };
+  const angle = (a, b) => 2 * Math.acos(Math.min(1, Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3])));
+  for (let j = 1; j < J; j++) {
+    for (let f = 1; f < frames; f++) {
+      const prev = q(f - 1, j);
+      if (angle(q(f, j), prev) <= jump) continue;
+      // A glitch ends where the joint is back near where it was, or jumps back.
+      let k = f + 1;
+      while (k < Math.min(frames, f + window) && angle(q(k, j), prev) > settle && angle(q(k, j), q(k - 1, j)) <= jump) k++;
+      if (k >= Math.min(frames, f + window)) continue; // a lasting change, not a glitch
+      const next = q(k, j);
+      for (let g = f; g < k; g++) {
+        const t = (g - (f - 1)) / (k - (f - 1));
+        const r = slerpQ(prev, next, t);
+        const o = (g * J + j) * TF + 3;
+        poses[o] = r[0];
+        poses[o + 1] = r[1];
+        poses[o + 2] = r[2];
+        poses[o + 3] = r[3];
+      }
+      f = k;
+    }
+  }
+}
+
+function slerpQ(a, b, t) {
+  let d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+  const s = d < 0 ? -1 : 1;
+  d = Math.abs(d);
+  if (d > 0.9995) return qnormalize(a.map((x, i) => x + (s * b[i] - x) * t));
+  const th = Math.acos(d);
+  return qnormalize(a.map((x, i) => (Math.sin((1 - t) * th) * x + s * Math.sin(t * th) * b[i]) / Math.sin(th)));
+}
+
+/** Re-solve every arm and leg of every frame as a two-bone limb with a true hinge (in place). */
+export function hingeLimbs(skeleton, poses, frames) {
+  const J = skeleton.numJoints;
+  const infos = Object.values(LIMBS).map((names) => limbInfo(skeleton, names));
+  const normals = infos.map(() => null);
+  const world = new Float64Array(J * TF);
+  for (let f = 0; f < frames; f++) {
+    const local = poses.subarray(f * J * TF, (f + 1) * J * TF);
+    skeleton.world(local, world);
+    infos.forEach((info, i) => {
+      const P = (j) => [world[j * TF], world[j * TF + 1], world[j * TF + 2]];
+      const [u, m, e] = [P(info.u), P(info.m), P(info.e)];
+      const r = solveLimb(skeleton, info, local, world, [m[0] - u[0], m[1] - u[1], m[2] - u[2]], [e[0] - m[0], e[1] - m[1], e[2] - m[2]], { prevNormal: normals[i] });
+      normals[i] = r.normal;
+    });
+  }
+}
 
 /** SOMA joint <- CMU joint (as in the CMU BVH exports, e.g. una-dinosauria/cmu-mocap). */
 export const CMU_TO_SOMA = {
@@ -89,7 +165,7 @@ export function rotationBetweenFrames(a1, a2, b1, b2) {
  * @param {Record<string,string>} map  SOMA joint -> source joint
  * @param {{ sampleRate?: number }} [options]
  */
-export function retarget(source, soma, map = CMU_TO_SOMA, { sampleRate = 30 } = {}) {
+export function retarget(source, soma, map = CMU_TO_SOMA, { sampleRate = 30, clean = true, hinge = true, limits = true } = {}) {
   const src = source.skeleton;
   const J = soma.numJoints;
   const S = src.numJoints;
@@ -163,7 +239,9 @@ export function retarget(source, soma, map = CMU_TO_SOMA, { sampleRate = 30 } = 
   const scale = somaLeg / srcLeg;
 
   // ---- frames -----------------------------------------------------------------
-  const duration = source.duration;
+  // CMU exports start with a calibration T-pose frame: skip it.
+  const start = leadingCalibrationFrame(source) ? 1 / source.sampleRate : 0;
+  const duration = source.duration - start;
   const frames = Math.max(1, Math.floor(duration * sampleRate) + 1);
   const poses = new Float64Array(frames * J * TF);
   const srcLocal = new Float64Array(S * TF);
@@ -171,7 +249,7 @@ export function retarget(source, soma, map = CMU_TO_SOMA, { sampleRate = 30 } = 
   const restInv = pairs.map(([, cj]) => qinv(rot(srcRest, cj))); // identity for BVH rest, kept for generality
   const outWorld = new Float64Array(J * TF);
   for (let f = 0; f < frames; f++) {
-    source.sample(f / sampleRate, srcLocal);
+    source.sample(start + f / sampleRate, srcLocal);
     src.world(srcLocal, srcWorld);
     // World rotations of mapped joints.
     const worldQ = new Array(J);
@@ -196,6 +274,19 @@ export function retarget(source, soma, map = CMU_TO_SOMA, { sampleRate = 30 } = 
       setTf(outWorld, j, tmul(parentW, local));
     }
   }
+
+  // Mocap glitches: a joint that jumps implausibly fast (marker swaps and
+  // rotation flips in old captures) is interpolated across the glitch.
+  if (clean) despike(soma, poses, frames);
+
+  // Limbs: SOMA's elbows and knees are pure hinges (as in NVIDIA's data);
+  // CMU's elbows also carry forearm twist. Re-solve each arm and leg so the
+  // hinge bends in the limb's plane, keeping elbow, wrist, knee and ankle
+  // positions and the hand's and foot's world rotation.
+  if (hinge) hingeLimbs(soma, poses, frames);
+  // Anatomical ranges (old mocap has occasional flipped ankles and wrists).
+  const cache = {};
+  if (limits) for (let f = 0; f < frames; f++) applyJointLimits(soma, poses.subarray(f * J * TF, (f + 1) * J * TF), 1, cache);
 
   // Floor: the lowest toe over the clip sits at SOMA's rest toe height.
   const clip = new Clip(soma, sampleRate, poses);

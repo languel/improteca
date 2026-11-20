@@ -37,8 +37,16 @@ export function sampleWindow(clip, time, place, anchor) {
 
 export class Inbetweener {
   /** @param {import('./soma.js').SomaEngine} engine */
-  constructor(engine) {
+  /**
+   * @param {import('./soma.js').SomaEngine} engine
+   * @param {{ constraints?: import('./constraints.js').Constraints }} [options]
+   *   constraints correct each played frame, in order, before it plays and
+   *   before it becomes the next context.
+   */
+  constructor(engine, { constraints = null } = {}) {
     this.engine = engine;
+    this.constraints = constraints;
+    this.first = true;
     this.J = engine.skeleton.numJoints;
     this.context = null;
     this.segment = null;
@@ -48,6 +56,7 @@ export class Inbetweener {
 
   /** Start from a four-pose window (sampleWindow(..., anchor 3)). */
   reset(startPoses) {
+    this.first = true;
     this.context = this.engine.token(startPoses, POSES_PER_TOKEN);
     this.segment = null;
     this.time = 0;
@@ -63,6 +72,11 @@ export class Inbetweener {
     this.time = 0;
     // At least four frames play, because the next context is the last four played frames.
     this.endFrame = Math.max(POSES_PER_TOKEN - 1, out.frameCount - 1 - (target.early ?? 0));
+    if (this.constraints) {
+      // Frame 0 repeats the last played (already corrected) pose, except at the start.
+      this.constraints.apply(out.poses, out.contacts, this.first ? 0 : 1, this.endFrame);
+    }
+    this.first = false;
     return out;
   }
 

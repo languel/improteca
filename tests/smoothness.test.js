@@ -14,6 +14,7 @@ import { sampleWindow, Inbetweener } from '../src/engine/inbetweener.js';
 import { placement, TF, qmul, qinv, qToAxisAngle } from '../src/engine/math.js';
 import { ortRunner } from '../src/engine/ort.js';
 import { retarget } from '../src/engine/retarget.js';
+import { Constraints } from '../src/engine/constraints.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const FIXTURE = `${root}local/fixtures/reference.json`;
@@ -38,7 +39,7 @@ function angle(a, ao, b, bo) {
   return 4 * Math.asin(Math.min(1, Math.sqrt(d2) / 2));
 }
 
-async function chainCheck(label, loadClips, limit) {
+async function chainCheck(label, loadClips, limit, constraints = false) {
   const fx = JSON.parse(readFileSync(FIXTURE, 'utf8'));
   const skeleton = Skeleton.fromJSON(fx.skeleton);
   const J = skeleton.numJoints;
@@ -56,7 +57,7 @@ async function chainCheck(label, loadClips, limit) {
     const a = i * 1.1;
     targets.push({ poses: sampleWindow(clip, t, placement(1.5 * Math.cos(a), 1.5 * Math.sin(a), a + 1), 0), numPoses: 1 + (i % 4) });
   }
-  const player = new Inbetweener(engine);
+  const player = new Inbetweener(engine, { constraints: constraints ? new Constraints(skeleton) : null });
   player.reset(sampleWindow(Object.values(clips)[0], 1, placement(0, 0, 0), 3));
 
   // Record the played frames, marking each handover.
@@ -101,6 +102,13 @@ async function chainCheck(label, loadClips, limit) {
   // was tried and did not help (legs got worse), so the kink comes from the
   // model's first frames. This guards against regressions.
   assert.ok(worstRatio < limit, `${label}: a handover's acceleration is ${worstRatio.toFixed(2)}x the 99th percentile`);
+  // No joint spins (a flip of a hinge or a clamp shows as a burst of speed).
+  let fastest = 0;
+  for (let j = 1; j < J; j++) {
+    for (let f = 1; f < played.length; f++) fastest = Math.max(fastest, angle(played[f], j * TF, played[f - 1], j * TF) * SAMPLE_RATE);
+  }
+  console.log(`  fastest joint ${fastest.toFixed(1)} rad/s`);
+  assert.ok(fastest < 20, `${label}: a joint spins at ${fastest.toFixed(1)} rad/s`);
 }
 
 test('a long chain of NVIDIA clips plays without pops at handovers', { skip, timeout: 600_000 }, () =>
@@ -113,6 +121,6 @@ const haveCMU = CMU.every((id) => existsSync(`${CLIPS}${id}.bvh`));
 test('a long chain of retargeted CMU dance plays without pops at handovers', { skip: skip || (!haveCMU && 'CMU clips missing'), timeout: 600_000 }, () =>
   chainCheck('CMU dance', (fx, skeleton) => Object.fromEntries(CMU.map((id) =>
     [id, retarget(parseBVH(readFileSync(`${CLIPS}${id}.bvh`, 'utf8')), skeleton)])),
-  // Measured baseline: up to 2.04x (left leg; arms 1.7-1.8x), a little sharper
-  // than NVIDIA's own clips. Something to improve; this guards regressions.
-  2.5));
+  // With the default constraints, as the app plays it. Measured: up to 1.9x
+  // (raw model output on these targets: 3.0x at one right-arm handover).
+  2.5, true));

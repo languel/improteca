@@ -13,8 +13,9 @@
 // lowest foot is placed on the floor, so jumps lose their height.
 
 import { TF, getTf, setTf, tf, tp, tq, qmul, qinv, qnormalize } from '../engine/math.js';
-import { rotationBetween, rotationBetweenFrames } from '../engine/retarget.js';
+import { rotationBetween, rotationBetweenFrames, hingeLimbs } from '../engine/retarget.js';
 import { Clip } from '../engine/bvh.js';
+import { applyJointLimits } from '../engine/constraints.js';
 
 // MediaPipe Pose landmark indices.
 export const LM = {
@@ -159,6 +160,10 @@ export function fitClip(track, skeleton) {
   const n = smooth.length;
   const poses = new Float64Array(n * J * TF);
   for (let f = 0; f < n; f++) poses.set(fitter.fit(smooth[f]), f * J * TF);
+  // Elbows and knees as true hinges (positions kept), as in NVIDIA's data.
+  hingeLimbs(skeleton, poses, n);
+  const cache = {};
+  for (let f = 0; f < n; f++) applyJointLimits(skeleton, poses.subarray(f * J * TF, (f + 1) * J * TF), 1, cache);
   // Floor: lowest toe each frame on the floor, smoothed so it does not jitter.
   const lift = new Float64Array(n);
   const w = new Float64Array(J * TF);
