@@ -42,7 +42,7 @@ jobs:
       - name: Collect the site
         run: |
           mkdir -p _site
-          cp -r index.html app src assets LICENSE _site/
+          cp -r index.html inbetweener.html app src assets LICENSE _site/
       # Pages must be enabled once with Source "GitHub Actions"
       # (Settings > Pages); a workflow token cannot turn it on.
       - uses: actions/configure-pages@v5

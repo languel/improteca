@@ -134,3 +134,24 @@ details[open] summary h2::after { content: ' ▾'; }
   button, .file { padding: 9px 13px; }
   .pose input[type="range"] { height: 28px; }
 }
+
+/* Dancer page */
+.label { display: block; font-weight: 600; margin-bottom: 6px; }
+textarea, #api-key, .row input[type="number"] {
+  font: inherit; color: var(--text); background: var(--field);
+  border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; width: 100%;
+}
+textarea { resize: vertical; min-height: 64px; }
+#api-key { margin: 8px 0; }
+.row input[type="number"] { width: 72px; padding: 4px 6px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.chip { font-size: 12.5px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; background: var(--field); color: var(--text); cursor: pointer; }
+.chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); cursor: default; }
+.understood { margin-top: 10px; }
+.now { min-height: 64px; }
+.now .move { font-weight: 600; }
+.now .why, .log .why { color: var(--muted); font-size: 12.5px; }
+.log { margin: 8px 0 10px; padding-left: 26px; display: grid; gap: 6px; font-size: 13px; max-height: 340px; overflow-y: auto; }
+.log li::marker { color: var(--muted); }
+.home { color: inherit; text-decoration: none; }
+footer { border-top: 1px solid var(--line); padding-top: 12px; }

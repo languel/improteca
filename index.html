@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>improteca inbetweener</title>
+  <title>improteca</title>
+  <meta name="description" content="An improvising virtual dancer: tell it how to dance; it chooses from movement it has learned and moves with NVIDIA MotionBricks, in the browser.">
   <link rel="stylesheet" href="app/style.css">
   <script type="importmap">
   {
@@ -19,64 +20,70 @@
   <aside id="panel">
     <header>
       <h1>improteca</h1>
-      <p class="sub">Inbetweener: generate motion through poses with NVIDIA MotionBricks, in the browser.</p>
-      <button id="quick-start" class="primary wide">Quick start</button>
-      <p class="hint">Loads the model (380 MB once, then cached) and dance clips from the mediathèque, makes random targets and plays in a loop.</p>
+      <p class="sub">An improvising dancer. Tell it how to dance: it chooses from movement it has learned and moves with NVIDIA MotionBricks, in your browser.</p>
     </header>
 
     <section>
-      <h2>Model</h2>
-      <p id="model-status" class="status">Not loaded. MotionBricks SOMA, FP16, 380 MB (cached after the first load).</p>
-      <div class="progress" hidden><div id="model-progress"></div></div>
-      <div class="row">
-        <button id="load-model" class="primary">Load model</button>
-        <label class="file">Local .onnx…<input id="model-file" type="file" accept=".onnx"></label>
+      <label for="prompt" class="label">How should it dance?</label>
+      <textarea id="prompt" rows="3" placeholder="e.g. slow and low, like sinking into water">slow and expansive, arms reaching high, with pauses</textarea>
+      <div id="examples" class="chips" aria-label="Example prompts"></div>
+      <button id="dance" class="primary wide">Dance</button>
+      <p id="status" class="status">First run loads the motion model (380 MB, then cached) and learns dance from the mediathèque.</p>
+      <div class="progress" hidden><div id="progress"></div></div>
+      <div id="understood" class="understood" hidden>
+        <div id="intent-chips" class="chips"></div>
+        <p id="intent-note" class="hint"></p>
       </div>
     </section>
 
     <section>
-      <h2>Clips</h2>
-      <p class="hint">BVH on the SOMA skeleton (used as is) or the CMU skeleton (retargeted onto SOMA). NVIDIA's samples are for evaluation only and load straight from their repository.</p>
+      <h2>Now</h2>
+      <div id="now" class="now"><p class="hint">Not dancing yet.</p></div>
       <div class="row">
-        <label class="file">Open BVH…<input id="clip-files" type="file" accept=".bvh" multiple></label>
-        <button id="load-samples">NVIDIA samples</button>
+        <button id="pause" disabled>Pause</button>
+        <label class="check" title="Same seed and prompt give the same choices">Seed <input id="seed" type="number" min="1" step="1" value="7"></label>
+        <button id="reseed" title="New seed">🎲</button>
+        <label class="check"><input id="follow" type="checkbox" checked> Follow</label>
       </div>
-      <ul id="clips" class="list"></ul>
     </section>
 
     <section>
-      <details id="mediatheque">
-        <summary><h2>Mediathèque</h2></summary>
-        <p class="hint">Motion capture from <a href="https://languel.github.io/mediatheque/" target="_blank" rel="noopener">languel/mediatheque</a>. Tap a clip to add it.</p>
+      <details>
+        <summary><h2>Choices</h2></summary>
+        <p class="hint">Every movement the dancer chose, newest first, with how it was changed and why.</p>
+        <ol id="log" class="log" reversed></ol>
+        <button id="export">Export log (JSON)</button>
+      </details>
+    </section>
+
+    <section>
+      <details id="repertoire-details">
+        <summary><h2>Repertoire</h2></summary>
+        <p id="repertoire" class="hint">Nothing learned yet.</p>
+        <p class="hint">Teach it more from the <a href="https://languel.github.io/mediatheque/" target="_blank" rel="noopener">mediathèque</a> (tap a clip), or from a BVH file.</p>
+        <label class="file">Teach a BVH…<input id="bvh" type="file" accept=".bvh" multiple></label>
         <ul id="catalog" class="catalog"></ul>
       </details>
     </section>
 
     <section>
-      <details id="poses-details" open>
-        <summary><h2>Poses</h2></summary>
-        <p class="hint">Start, then targets in order. Each is a moment of a clip placed on the floor.</p>
-        <ol id="poses" class="poses"></ol>
+      <details>
+        <summary><h2>Language model</h2></summary>
+        <p class="hint">Prompts are read by a built-in movement vocabulary. For freer language and imagery, use Claude with your own Anthropic API key. The key is sent only to Anthropic.</p>
+        <label class="check"><input id="use-llm" type="checkbox"> Use Claude for prompts</label>
+        <input id="api-key" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
+        <label class="check"><input id="remember-key" type="checkbox"> Remember on this device</label>
       </details>
-      <div class="row">
-        <button id="add-target">Add target</button>
-        <button id="random-targets" title="Replace targets with random moments from the loaded clips">Random targets</button>
-      </div>
     </section>
 
-    <section>
-      <h2>Play</h2>
-      <div class="row">
-        <button id="play" class="primary" disabled>Play</button>
-        <button id="stop" disabled>Stop</button>
-        <label class="check"><input id="loop" type="checkbox"> Loop</label>
-        <label class="check"><input id="ghosts" type="checkbox" checked> Show poses</label>
-        <label class="check"><input id="follow" type="checkbox" checked> Follow</label>
-      </div>
-      <dl id="stats" class="stats"></dl>
-    </section>
+    <footer class="hint">
+      <a href="inbetweener.html">Inbetweener</a> ·
+      <a href="https://github.com/languel/improteca" target="_blank" rel="noopener">Source</a> ·
+      Motion: <a href="https://github.com/NVlabs/motionbricks" target="_blank" rel="noopener">NVIDIA MotionBricks</a>.
+      Movement: CMU Graphics Lab Motion Capture Database, via the mediathèque.
+    </footer>
   </aside>
   <main id="viewport" aria-label="Stage"></main>
-  <script type="module" src="app/main.js"></script>
+  <script type="module" src="app/dancer.js"></script>
 </body>
 </html>

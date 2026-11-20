@@ -1,6 +1,6 @@
 # Design
 
-Status: first draft, November 2026. Milestone 1 (the Inbetweener) is built; see the README.
+Status: November 2026. Milestones 1-3 work as a demo (prompt, repertoire, improviser); see the README.
 
 ## 1. What we are building
 
@@ -205,10 +205,12 @@ permission requiring HTTPS (GitHub Pages provides it).
 1. **Inbetweener in the browser.** Done: the engine port is tested against
    NVIDIA's pipeline; chains of NVIDIA clips hand over without pops. Phone
    layout, GitHub Pages, and mediathèque clips retargeted from CMU.
-2. **Repertoire.** Import a clip, split it into movements, compute
-   descriptors, browse and name them, play any movement through the engine.
-3. **Improviser v1.** Seeded weighted walk, with mirror, retrograde, level and
-   reorient. Runs indefinitely without repeating itself obviously. Logged.
+2. **Repertoire.** Done (v1): clips split at natural pauses into movements of
+   0.6-3 s with key moments on grounded, slow frames, and descriptors.
+3. **Improviser v1.** Done: seeded choice by intention, continuity and novelty;
+   mirror, retrograde, tempo, reorientation to stay on stage; logged with
+   reasons. Prompt to intentions (built-in vocabulary, optional Claude) is in
+   place too, ahead of milestone 5.
 4. **Phone camera.** MediaPipe in the page: teach by showing (fit SOMA
    rotations), then live response (mirror, echo, counter).
 5. **Intentions.** Prompt to intentions; then the multimodal model (LFM3 Omni

@@ -11,6 +11,13 @@ src/engine/   the motion engine: a port of NVIDIA's MotionBricks SOMA runtime
   inbetweener.js  the generate / play / feed-back loop of NVIDIA's Inbetweener demo
   retarget.js     CMU (and other) BVH onto the SOMA skeleton
   ort.js          ONNX Runtime adapter (web or node) and the model URLs
+src/dancer/   the dancer
+  repertoire.js   split clips into movements; descriptors; key moments
+  improviser.js   choose, transform and place the next movement; the log
+  transforms.js   mirror (exact, with SOMA's rest frames) and placement
+  intentions.js   prompt -> intentions with a built-in movement vocabulary
+  llm.js          prompt -> intentions with Claude (optional, user's own key)
+app/          the pages: dancer.js (index.html), inbetweener.js, stage, model loading
 assets/soma/  the SOMA skeleton (names, parents, rest pose)
 reference/    a script that runs NVIDIA's own pipeline on CPU to make test fixtures
 tests/        node --test
@@ -43,11 +50,9 @@ things, and skip without them:
    from `assets/motions/soma/` in [NVlabs/motionbricks](https://github.com/NVlabs/motionbricks)
    (Git LFS; the media URL pattern above works for them too).
 
-   For the retarget and CMU smoothness tests, also these mediathèque clips as
-   `local/clips/<id>.bvh`, from `https://languel.github.io/mediatheque/items/<id>/motion.bvh`:
-   `cmu-everyday-waiting-idle-139-02`, `cmu-ballet-pirouette-05-02`,
-   `cmu-ballet-arabesque-05-03`, `cmu-dance-arching-arms-49-12`,
-   `cmu-dance-balance-tilt-49-22`, `cmu-ballet-pointe-tendue-05-12`.
+   For the retarget, dancer and CMU smoothness tests, also the mediathèque's CMU
+   clips as `local/clips/<id>.bvh` (all `cmu-*` items, from
+   `https://languel.github.io/mediatheque/items/<id>/motion.bvh`).
 
 3. **Reference fixtures**, `local/fixtures/reference.json`, made by running
    NVIDIA's own Warp kernels on the CPU with ONNX Runtime in place of
@@ -86,3 +91,10 @@ things, and skip without them:
   improving.
 - **Speed.** About 40 to 60 ms per generation with ONNX Runtime on CPU (4
   cores), for 1.6 to 1.9 s of motion.
+- **The dancer.** Prompts steer the choices strongly (25-step runs: mean
+  energy 0.18 for "calm and still" versus 1.80 for "vigorous, jumping and
+  turning"; "ballet" picks ballet 24 times in 25; "no ballet" none). Same seed
+  and prompt give the same performance. A 40-step travelling run stays within
+  4.5 m of centre. In MotionBricks chains, transitions between movements hand
+  over smoothly; the sharpest handover found was inside a turning ballet
+  phrase (likely the head spotting), not at a transition.
