@@ -20,7 +20,8 @@ import { TF } from '../src/engine/math.js';
 import { learn } from '../src/dancer/repertoire.js';
 import { Improviser, rng } from '../src/dancer/improviser.js';
 import { parsePrompt, describeIntentions } from '../src/dancer/intentions.js';
-import { Director, parseScore, describeStep } from '../src/dancer/score.js';
+import { Director, parseScore, describeStep, mergeSteps } from '../src/dancer/score.js';
+import { KimodoClient, DEFAULT_URL as KIMODO_URL } from '../src/dancer/kimodo.js';
 import { intentionsFromBrain } from '../src/dancer/brains.js';
 import { setupBrainPanel, brainSettings, brainName, brainActive } from './brain-panel.js';
 import { learnFromVideo } from './video.js';
@@ -105,7 +106,15 @@ async function boot() {
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => viz.setColor(performerColor()));
   state.improviser = new Improviser({ skeleton: state.skeleton, movements: [], seed: Number($('seed').value) });
   state.director = new Director({ improviser: state.improviser, skeleton: state.skeleton });
+  state.kimodo = new KimodoClient(state.skeleton, { url: params.get('kimodo') && params.get('kimodo') !== 'off' ? params.get('kimodo') : KIMODO_URL });
+  state.director.onKimodo = (e) => {
+    const what = `step ${e.step + 1}: “${e.text.length > 70 ? `${e.text.slice(0, 70)}…` : e.text}”`;
+    $('kimodo-status').textContent = e.state === 'asking' ? `Kimodo is generating ${what}`
+      : e.state === 'ready' ? `Kimodo generated ${what} in ${(e.ms / 1000).toFixed(1)} s.`
+        : `Kimodo failed on ${what}: ${e.error}. Using learned clips for this step.`;
+  };
   bindUI();
+  if (params.get('kimodo') !== 'off') checkKimodo();
   // For inspection from the console and automated checks.
   window.improteca = { state, ready: false, pose: (local) => viz.update(local), viz };
   requestAnimationFrame(frame);
@@ -235,11 +244,12 @@ async function readPrompt(prompt) {
       setStatus(`${name} read the prompt.`);
       // A small model may miss the actions; the built-in vocabulary catches plain ones (stand, walk a circle).
       const builtIn = parseScore(prompt);
-      const useBuiltIn = !steps.length && builtIn.steps.length;
+      const merged = mergeSteps(steps, builtIn.steps);
       return {
         intentions,
-        steps: useBuiltIn ? builtIn.steps : steps,
-        note: `${name}: ${summary || 'read the prompt'}${useBuiltIn ? ` Steps read with the built-in vocabulary: ${builtIn.understood.join(', then ')}.` : ''}`,
+        summary,
+        steps: merged.steps,
+        note: `${name}: ${summary || 'read the prompt'}${merged.added.length ? ` Added from the built-in vocabulary: ${merged.added.map(describeStep).join(', ')}.` : ''}`,
       };
     } catch (err) {
       console.warn(err);
@@ -252,6 +262,19 @@ async function readPrompt(prompt) {
   const score = parseScore(prompt);
   if (score.steps.length) return { intentions, steps: score.steps, note: `Read as steps: ${score.understood.join(', then ')}.` };
   return { intentions, steps: [], note: understood.length ? `Read as: ${understood.join('; ')}.` : 'No movement words recognised: improvising freely.' };
+}
+
+/** Is the local Kimodo server running? Updates the Text to motion panel. */
+async function checkKimodo() {
+  if (params.get('kimodo') === 'off') {
+    $('kimodo-status').textContent = 'Off (?kimodo=off).';
+    return false;
+  }
+  const ok = await state.kimodo.check(800);
+  $('kimodo-status').textContent = ok
+    ? `Kimodo is running at ${state.kimodo.url} (${state.kimodo.info.model}): steps are generated from text.`
+    : `Kimodo is not running at ${state.kimodo.url} (${state.kimodo.error}): the dancer uses learned clips.`;
+  return ok;
 }
 
 function showIntentions(intentions, note, steps = []) {
@@ -273,10 +296,13 @@ async function dance() {
   const prompt = $('prompt').value.trim();
   $('dance').disabled = true;
   try {
-    const { intentions, steps, note } = await readPrompt(prompt);
+    const { intentions, steps, note, summary = '' } = await readPrompt(prompt);
     showIntentions(intentions, note, steps);
     state.history.push({ at: new Date().toISOString(), prompt, intentions, steps });
-    state.director.setScore(steps, intentions);
+    // Text to motion for every step when the Kimodo server is running (checked again on each prompt).
+    await checkKimodo();
+    state.director.kimodo = $('kimodo-use').checked && state.kimodo.ready ? state.kimodo : null;
+    state.director.setScore(steps, intentions, { prompt, summary });
     await loadEverything();
     if (!state.running) start();
     else {
@@ -662,6 +688,7 @@ function bindView() {
 // ---- UI -------------------------------------------------------------------------------
 
 function bindUI() {
+  $('kimodo-check').addEventListener('click', () => checkKimodo());
   for (const text of EXAMPLES) {
     const b = document.createElement('button');
     b.className = 'chip';

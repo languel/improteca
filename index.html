@@ -126,6 +126,18 @@
     </section>
 
     <section>
+      <details id="kimodo-panel">
+        <summary><h2>Text to motion</h2></summary>
+        <p class="hint">With NVIDIA's Kimodo running on this machine, every step is generated from words (standing, walking a floor pattern, jumping, dancing) instead of borrowed from learned clips; MotionBricks moves the body through it. Start it with <code>local/vendor/kimodo-turbo/.venv/bin/python tools/kimodo_server.py</code> (see docs/DEVELOPING.md).</p>
+        <div class="row">
+          <label class="check"><input id="kimodo-use" type="checkbox" checked> Use Kimodo when it is running</label>
+          <button id="kimodo-check" type="button">Check</button>
+        </div>
+        <p id="kimodo-status" class="hint">Not checked yet.</p>
+      </details>
+    </section>
+
+    <section>
       <details id="brain-panel">
         <summary><h2>Brain</h2></summary>
         <p class="hint">A language model reads freer language and imagery in prompts. Without one, a built-in movement vocabulary reads them. WebGPU models run in this browser (a one-time download, nothing leaves your machine); local servers need to allow this page's origin (for Ollama: <code>OLLAMA_ORIGINS</code>); cloud models use your own key, sent only to that provider.</p>

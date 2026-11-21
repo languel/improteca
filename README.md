@@ -30,12 +30,22 @@ replayed from its seed.
   OpenRouter, Gemini, GitHub Models or any OpenAI-compatible API with your
   own key.
 - **Score**: a prompt that asks for actions ("stand in a neutral pose, then
-  walk in a circle", "walk 2 m forward, then dance for 5 seconds") is read as
-  steps: stand, walk a path (circle or line) or dance. The director borrows a
-  body pose from learned movement (a calm standing frame, one phase of a
-  walking gait), places it in space (on the path, facing along it) and
-  MotionBricks generates the motion between; clips are never mixed. Prompts
-  about qualities only stay free improvisation.
+  walk in a circle", "walk in a pentagon, then jump") is read as steps: stand,
+  walk, jump or dance. Walks are floor patterns the brain composes from a small
+  general toolkit (forward, turn, arc, repeat), so any shape or path can be
+  asked for; the brain works out the geometry. The director borrows a body pose
+  from learned movement (a calm standing frame, one phase of a walking gait,
+  the top of a learned jump), places it in space and MotionBricks generates
+  the motion between; clips are never mixed. Prompts about qualities only stay
+  free improvisation.
+- **Text to motion** (optional, on this machine): with NVIDIA's
+  [Kimodo](https://research.nvidia.com/labs/sil/projects/kimodo/) running
+  locally, every step is generated from words on the same SOMA skeleton
+  (standing, walking a floor pattern as a path constraint, jumping, dancing)
+  instead of borrowed from retargeted mocap; MotionBricks moves the body
+  through it live and the body constraints apply on top. On a Mac it runs
+  through the community MLX port kimodo-turbo (about 4 s per 8 s clip on an
+  M4 Max). Setup: [docs/DEVELOPING.md](docs/DEVELOPING.md#text-to-motion-kimodo).
 - **Repertoire**: clips are split into movements at natural pauses and
   described (level, size, energy, travel, turning, jumps, which part leads).
 - **Improviser**: chooses by intention, continuity with the current pose and
@@ -73,7 +83,7 @@ No build step. Serve the folder and open it in a desktop browser with WebGPU
 (Chrome or Edge, or Safari 26 on a Mac):
 
 ```bash
-python3 -m http.server 5310
+npm run serve        # or: python3 tools/serve.py 5310 (a static server that disables caching)
 ```
 
 Open <http://127.0.0.1:5310/>, write a prompt and press **Dance**. The first run

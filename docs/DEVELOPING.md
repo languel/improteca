@@ -154,3 +154,60 @@ things, and skip without them:
   position jitter near handovers 7.2 mm/frame² (raw 7.9). Foot planting is
   smoothed (contact held for a few frames, critically damped spring) so a
   planted foot does not snap.
+
+## Text to motion (Kimodo)
+
+Optional. The page uses it when `tools/kimodo_server.py` answers at
+`http://127.0.0.1:5320` (the **Text to motion** panel says so; `?kimodo=off`
+or the panel's checkbox turns it off; `?kimodo=<url>` points elsewhere).
+Without it the director borrows poses from learned clips as before.
+
+On Apple Silicon, through [kimodo-turbo](https://github.com/octaviusp/kimodo-turbo)
+(a community MLX port; NVIDIA's own code at a pinned commit, patched to build
+on arm64), in the git-ignored `local/vendor/`:
+
+```bash
+git clone https://github.com/octaviusp/kimodo-turbo.git local/vendor/kimodo-turbo
+cd local/vendor/kimodo-turbo
+# what scripts/setup.zsh does, without the Rust character autorig we do not use:
+mkdir -p .deps out/weights
+git clone https://github.com/nv-tlabs/kimodo.git .deps/kimodo
+git -C .deps/kimodo checkout 58e781898b3d7e328a676a75d3e338c45dce3ad9
+for p in $PWD/patches/*.patch; do git -C .deps/kimodo apply "$p"; done
+curl -fsSL https://raw.githubusercontent.com/DLTcollab/sse2neon/v1.9.1/sse2neon.h \
+  -o .deps/kimodo/MotionCorrection/src/cpp/Math/sse2neon.h   # SHA-256 78632498…bc92ed
+uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python cmake pybind11
+PATH="$PWD/.venv/bin:$PATH" uv pip install --python .venv/bin/python ./.deps/kimodo 'torch==2.14.1' \
+  'mlx==0.32.3' safetensors tokenizers 'huggingface_hub[hf_xet]==1.33.0'
+uv pip install --python .venv/bin/python --no-deps -e .
+export HF_HOME=$PWD/out/hf
+# the motion model from NVIDIA (1.1 GB, NVIDIA Open Model License):
+.venv/bin/hf download nvidia/Kimodo-SOMA-RP-v1 --local-dir out/weights/Kimodo-SOMA-RP-v1
+# the Llama 3 text encoder as streamable shards (14 GB, Meta Llama 3 licence):
+.venv/bin/hf download Javascript/Llama-3-Kimodo-Turbo --revision bcdf39bf070269e6dbab045334c93cb47a73f033 \
+  --local-dir out/weights --include 'llm2vec-llama3-8b/*' --include 'licenses/*' --include LICENSE --include NOTICE.txt
+```
+
+The encoder shards above are a community re-upload (no Meta token needed).
+To build them from Meta's originals instead, accept the Llama 3 licence on
+Hugging Face, log in (`hf auth login`) and run `.venv/bin/kimodo-turbo convert`.
+
+Then, from the repository root:
+
+```bash
+local/vendor/kimodo-turbo/.venv/bin/python tools/kimodo_server.py   # --port 5320 --steps 100
+```
+
+The server converts Kimodo's output to our rig: Kimodo's 77 SOMA joints are
+in the same order as `assets/soma/skeleton.json`, its rotations are relative
+to a neutral pose whose joint frames are the world frame, so each joint's
+world rotation is Kimodo's global rotation times our rest world rotation
+(checked: our forward kinematics lands within 4 cm of Kimodo's joint
+positions, the difference between the two rigs' bone lengths).
+
+Measured on an M4 Max (64 GB), standing for 8 s, held through MotionBricks
+with the body constraints: toes slide 0.026 m/s and hands move 0.07 m/s,
+the same as NVIDIA's own studio idle clip, against 0.069 and 0.17 for the
+retargeted CMU idle. A clip takes about 2 to 6 s to generate (100 steps);
+a jump needs at least 2.5 s of clip to leave the floor.
+

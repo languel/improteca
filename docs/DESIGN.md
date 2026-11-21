@@ -147,14 +147,35 @@ improviser reads.
 | Score | a written sequence; a notation-inspired timeline; "stand, then walk in a circle" in a prompt | Fixes some choices (this movement, at this time, on this spot) and leaves others to improvisation. |
 
 **Directed steps (score v1, `src/dancer/score.js`).** A prompt that asks for
-actions becomes steps (stand, walk a circle or a line, dance), from the brain
-(`steps` in its schema) or the built-in vocabulary. The director turns each
-into MotionBricks targets without mixing clips: standing holds a neutral
-standing stretch of a learned clip (arms down, feet under the body) on one
-spot; walking places one moment of a steady learned gait at every gait cycle
-along the path, facing along it, and MotionBricks generates the steps and the
-turning between. Dance steps go to the improviser. After the last directed
-step the dancer stands until the next prompt.
+actions becomes steps (stand, walk, jump, dance), from the brain (`steps` in
+its schema) merged with the built-in vocabulary, which puts back plain actions
+a small model drops. Walks are floor patterns written with a general toolkit,
+turtle geometry: forward (metres), turn on the spot and arc (degrees, positive
+to the left), and repeat. Named shapes are not built in: the brain composes
+them, writing a short `plan` of the geometry first (small models get the
+angles right when they work them out in words). The director turns steps into
+MotionBricks targets without mixing clips: standing holds a neutral standing
+stretch of a learned clip (arms down, feet under the body) on one spot;
+walking places one moment of a steady learned gait at every gait cycle along
+the pattern, facing along it, turning the whole pattern as little as needed to
+stay on stage; jumping chooses learned movement that really leaves the floor
+(toes and hips rising above the clip's own floor and standing height) and
+targets its highest point, since MotionBricks only leaves the floor when a
+target is in the air. Dance steps go to the improviser. After the last
+directed step the dancer stands until the next prompt.
+
+**Text to motion (Kimodo).** With NVIDIA's Kimodo running locally
+(`tools/kimodo_server.py`, `src/dancer/kimodo.js`), the director asks it for
+every step instead of borrowing from clips: the brain writes a plain physical
+description per step ("A person stands calmly, shifting their weight"),
+walks send their floor pattern as a root path constraint (split into clips
+of at most 10 s), and a prompt with no steps becomes an open-ended dance that
+keeps asking for new clips with new seeds. Each clip is placed at the dancer
+and MotionBricks in-betweens it through keyframes about every second plus
+the hips' highest and lowest moments (so jumps and drops survive), with the
+body constraints on top. Retargeted mocap was the main source of foot
+sliding and restlessness; Kimodo's output on the native skeleton is as clean
+as NVIDIA's studio clips.
 
 ### 3.6 Performance log
 

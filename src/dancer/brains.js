@@ -11,7 +11,7 @@
 // request shapes follow languel/seloai (src/ai/localApiClient.ts).
 
 import { NEUTRAL } from './improviser.js';
-import { ACTIONS, PATHS, DIRECTIONS, sanitizeSteps } from './score.js';
+import { ACTIONS, MOVES, sanitizeSteps } from './score.js';
 
 export const ANTHROPIC_SDK_URL = 'https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.6.0/+esm';
 
@@ -46,18 +46,28 @@ const QUALITIES = {
   stillness: 'Continuous flow (0) to pauses and holds (1).',
 };
 const nullable = (type, description, values = null) => ({ type: [type, 'null'], ...(values ? { enum: [...values, null] } : {}), description });
+const MOVE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['move', 'distance', 'angle', 'radius'],
+  properties: {
+    move: { type: 'string', enum: MOVES, description: 'forward (walk straight on), turn (on the spot), arc (walk along a curve).' },
+    distance: nullable('number', 'For forward: metres.'),
+    angle: nullable('number', 'For turn and arc: degrees; positive turns or curves to the left (counterclockwise seen from above), negative to the right.'),
+    radius: nullable('number', 'For arc: radius of the curve in metres.'),
+  },
+};
 const STEP_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['action', 'seconds', 'path', 'radius', 'distance', 'direction', 'laps'],
+  required: ['action', 'text', 'plan', 'seconds', 'moves', 'repeat'],
   properties: {
-    action: { type: 'string', enum: ACTIONS, description: 'stand (hold a natural standing pose), walk (along a path), dance (improvise with the qualities above).' },
-    seconds: nullable('number', 'How long, for stand and dance; null for the default (or until the next prompt, when it is the last step).'),
-    path: nullable('string', 'For walk: circle or line.', PATHS),
-    radius: nullable('number', 'For a circle: radius in metres (about 1 to 2.5).'),
-    distance: nullable('number', 'For a line: distance in metres.'),
-    direction: nullable('string', 'For a circle: turn to the left or right; null to choose.', DIRECTIONS),
-    laps: nullable('number', 'For a circle: how many times around (1 default).'),
+    action: { type: 'string', enum: ACTIONS, description: 'stand (hold a natural standing pose), walk (a floor pattern made of moves), jump, dance (improvise with the qualities above).' },
+    text: nullable('string', 'What the body does in this step, for a text-to-motion model: one or two plain sentences starting "A person", about the movement itself (no metaphor, no music), e.g. "A person sways slowly from side to side, arms drifting low." Null to let the dancer choose.'),
+    plan: nullable('string', 'For walk, before the moves: work out the geometry in a few words (sides, lengths, the angle at each corner or of each curve). Null otherwise.'),
+    seconds: nullable('number', 'How long, for stand, jump and dance; null for the default (or until the next prompt, when it is the last step).'),
+    moves: { type: ['array', 'null'], items: MOVE_SCHEMA, description: 'For walk: the floor pattern as moves in order; null otherwise.' },
+    repeat: nullable('number', 'For walk: how many times to do the moves in a row (1 default).'),
   },
 };
 const quality = (description) => ({ type: ['number', 'null'], description: `${description} 0 to 1, or null for no preference.` });
@@ -90,15 +100,23 @@ The dancer knows recorded movements (ballet, contemporary dance and everyday ges
 and chooses among them by these qualities. Read imagery and metaphor as movement qualities
 (e.g. "like seaweed" = continuous, low energy, arms leading; "a storm" = vigorous, travelling, turning).
 Set a quality only when the prompt implies it; otherwise null. Keep tempo between 0.6 and 1.4.
-When the prompt asks for specific actions or a sequence ("stand still", "walk in a circle", "stand, then walk,
-then dance"), list them in order in steps; the qualities then describe any dance steps. When the prompt only
-describes how to dance, steps is empty.`;
+When the prompt asks for specific actions or a sequence ("stand still", "walk somewhere", "stand, then walk,
+then jump"), list them in order in steps; the qualities then describe any dance steps. When the prompt only
+describes how to dance, steps is empty.
+For each step, also write text: the movement in plain physical words starting "A person" (it drives a motion model
+that knows everyday and dance movement but not imagery): translate imagery into what the body does.
+A walk is a floor pattern you compose from moves, like turtle geometry: forward (metres), turn on the spot
+(degrees, positive = left) and arc (radius and degrees, positive = curving left), with repeat for the whole list.
+Work out the geometry of any shape or path the prompt describes. For example: a square with 2 m sides is
+forward 2, turn 90, repeated 4 times (a closed shape with n equal sides turns 360/n degrees at each corner); a figure of eight is arc 360 radius 1 then arc -360 radius 1; a zigzag is
+forward 1, turn 120, forward 1, turn -120, repeated. Keep patterns within about 5 m across: the stage is a
+circle of 3 m radius around its centre.`;
 
 /** For models without structured outputs: the same schema, spelled out. */
 const JSON_INSTRUCTIONS = `Answer with one JSON object and nothing else (no prose, no code fence), with exactly these keys:
-${Object.entries(INTENTIONS_SCHEMA.properties).map(([k, v]) => `- "${k}": ${v.description}${v.enum ? ` One of: ${v.enum.filter(Boolean).join(', ')}, or null.` : ''}${v.items?.enum ? ` Values from: ${v.items.enum.join(', ')}.` : ''}${v.items?.properties ? ` Each step has the keys ${Object.keys(v.items.properties).map((p) => `"${p}"`).join(', ')}.` : ''}`).join('\n')}
+${Object.entries(INTENTIONS_SCHEMA.properties).map(([k, v]) => `- "${k}": ${v.description}${v.enum ? ` One of: ${v.enum.filter(Boolean).join(', ')}, or null.` : ''}${v.items?.enum ? ` Values from: ${v.items.enum.join(', ')}.` : ''}${v.items?.properties ? ` Each step has the keys ${Object.keys(v.items.properties).map((p) => `"${p}"`).join(', ')}; each move has the keys ${Object.keys(MOVE_SCHEMA.properties).map((p) => `"${p}"`).join(', ')}.` : ''}`).join('\n')}
 Example: {"energy":0.2,"level":0.1,"size":null,"travel":null,"turn":null,"armsUp":null,"jump":0,"stillness":0.6,"focus":"arms","tags":[],"avoid":[],"tempo":0.8,"variety":0.5,"mirror":0.35,"retrograde":0.1,"steps":[],"summary":"Slow, low and sustained, arms leading."}
-Example with steps: {"energy":0.2,"level":null,"size":null,"travel":null,"turn":null,"armsUp":null,"jump":0,"stillness":null,"focus":null,"tags":["everyday"],"avoid":[],"tempo":1,"variety":0.5,"mirror":0.35,"retrograde":0.1,"steps":[{"action":"stand","seconds":4,"path":null,"radius":null,"distance":null,"direction":null,"laps":null},{"action":"walk","seconds":null,"path":"circle","radius":1.5,"distance":null,"direction":null,"laps":1}],"summary":"Stand calmly, then walk one circle."}`;
+Example with steps: {"energy":0.2,"level":null,"size":null,"travel":null,"turn":null,"armsUp":null,"jump":0,"stillness":null,"focus":null,"tags":["everyday"],"avoid":[],"tempo":1,"variety":0.5,"mirror":0.35,"retrograde":0.1,"steps":[{"action":"stand","text":"A person stands calmly, shifting their weight now and then.","plan":null,"seconds":3,"moves":null,"repeat":null},{"action":"walk","text":"A person walks at a relaxed pace.","plan":"square: 4 sides of 2 m, turn 360/4 = 90 degrees at each corner","seconds":null,"moves":[{"move":"forward","distance":2,"angle":null,"radius":null},{"move":"turn","distance":null,"angle":90,"radius":null}],"repeat":4}],"summary":"Stand calmly, then walk a square with 2 m sides."}`;
 
 export const messagesFor = (prompt, structured) => [
   { role: 'system', content: structured ? SYSTEM : `${SYSTEM}\n\n${JSON_INSTRUCTIONS}` },
