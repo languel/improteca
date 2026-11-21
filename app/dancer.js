@@ -25,14 +25,19 @@ import { KimodoClient, DEFAULT_URL as KIMODO_URL } from '../src/dancer/kimodo.js
 import { intentionsFromBrain } from '../src/dancer/brains.js';
 import { setupBrainPanel, brainSettings, brainName, brainActive } from './brain-panel.js';
 import { learnFromVideo } from './video.js';
+import { PartnerDirector } from '../src/dancer/webcam.js';
+import { MovementCritic, VLM_PROVIDERS } from '../src/dancer/critic.js';
 
 const params = new URLSearchParams(location.search);
 const $ = (id) => document.getElementById(id);
 const MEDIATHEQUE = 'https://languel.github.io/mediatheque/';
-// Taught by default: dance and everyday movement that needs no props.
+// Taught by default: dance and everyday movement (including table/chair/glass & athletic actions).
 const DEFAULT_CLIPS = [
   // Standing and walking first: the director borrows poses from them for directed steps.
-  'cmu-everyday-waiting-idle-139-02', 'cmu-everyday-natural-walk-02-01', 'cmu-dance-arching-arms-49-12', 'cmu-ballet-pirouette-05-02',
+  'cmu-everyday-waiting-idle-139-02', 'cmu-everyday-natural-walk-02-01',
+  'cmu-everyday-sit-stand-13-01', 'cmu-everyday-coffee-mug-137-26', 'cmu-everyday-drink-soda-13-07',
+  'cmu-everyday-floor-pickup-137-27', 'cmu-everyday-athletic-run-09-01',
+  'cmu-dance-arching-arms-49-12', 'cmu-ballet-pirouette-05-02',
   'cmu-dance-balance-tilt-49-22', 'cmu-ballet-arabesque-05-03', 'cmu-dance-side-arabesque-49-09',
   'cmu-ballet-pointe-tendue-05-12', 'cmu-ballet-retire-balance-05-14', 'cmu-dance-floor-curl-49-10',
   'cmu-ballet-glissade-05-09', 'cmu-ballet-rond-de-jambe-05-08', 'cmu-ballet-grand-jete-05-17',
@@ -42,11 +47,11 @@ const DEFAULT_CLIPS = [
 ];
 const START_AFTER = 6; // clips learned before the dancer starts
 const EXAMPLES = [
+  'go to the table, sit, pick up the glass and drink',
+  'copy my moves and improvise based on them',
   'slow and low, like sinking into water',
   'vigorous ballet with jumps and turns',
-  'small gestures led by the right hand',
-  'travel across the space, unpredictable',
-  'calm and still, arms high',
+  'stand, walk in a circle, then jump',
 ];
 
 const state = {
@@ -106,6 +111,9 @@ async function boot() {
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => viz.setColor(performerColor()));
   state.improviser = new Improviser({ skeleton: state.skeleton, movements: [], seed: Number($('seed').value) });
   state.director = new Director({ improviser: state.improviser, skeleton: state.skeleton });
+  state.partner = new PartnerDirector({ skeleton: state.skeleton, improviser: state.improviser, director: state.director });
+  state.critic = new MovementCritic({ skeleton: state.skeleton, improviser: state.improviser, director: state.director });
+  stage.updateEnvironment(state.director.env);
   state.kimodo = new KimodoClient(state.skeleton, { url: params.get('kimodo') && params.get('kimodo') !== 'off' ? params.get('kimodo') : KIMODO_URL });
   state.director.onKimodo = (e) => {
     const what = `step ${e.step + 1}: “${e.text.length > 70 ? `${e.text.slice(0, 70)}…` : e.text}”`;
@@ -138,10 +146,18 @@ function setProgress(f) {
 let catalog = null;
 async function loadCatalog() {
   if (catalog) return catalog;
-  const res = await fetch(MEDIATHEQUE + 'catalog.json');
-  if (!res.ok) throw new Error(`mediathèque catalog: HTTP ${res.status}`);
-  catalog = (await res.json()).filter((i) => i.bvh);
-  return catalog;
+  for (const url of ['local/catalog.json', MEDIATHEQUE + 'catalog.json']) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        catalog = (await res.json()).filter((i) => i.bvh);
+        return catalog;
+      }
+    } catch {
+      // try next source
+    }
+  }
+  throw new Error('Could not load mediathèque catalog.');
 }
 
 const shortTitle = (item) => item.title.replace(/\s*\(CMU Mocap [^)]*\)\s*$/, '');
@@ -164,9 +180,18 @@ function teach({ id, name, text = null, clip = null, credit = '', tags = null })
 }
 
 async function teachFromMediatheque(item) {
-  const res = await fetch(MEDIATHEQUE + item.bvh);
-  if (!res.ok) throw new Error(`${item.id}: HTTP ${res.status}`);
-  teach({ id: item.id, name: shortTitle(item), text: await res.text(), credit: item.rights?.credit || item.credit || '' });
+  for (const url of [`local/clips/${item.id}.bvh`, MEDIATHEQUE + item.bvh]) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        teach({ id: item.id, name: shortTitle(item), text: await res.text(), credit: item.rights?.credit || item.credit || '' });
+        return;
+      }
+    } catch {
+      // try next URL
+    }
+  }
+  throw new Error(`${item.id}: could not load clip`);
 }
 
 /** Start (or restart) the model worker with the chosen model and backend. */
@@ -325,6 +350,7 @@ function start() {
   state.running = true;
   state.paused = false;
   state.constraints = new Constraints(state.skeleton, bodySettings());
+  state.critic.constraints = state.constraints;
   state.player = new Inbetweener(state.engine, { constraints: state.constraints });
   viz.clear();
   const { targets, entry } = state.director.next(null);
@@ -335,14 +361,36 @@ function start() {
   state.trail = [];
   pump(state.run);
   updateButtons();
+  renderEnvBadges();
   window.improteca.ready = true;
+}
+
+/** Steer the dancer immediately with a directed step sequence (from RPG button, 3D click, or gesture). */
+async function triggerSteps(steps, note = '') {
+  showIntentions(state.improviser.intentions, note || `Directed: ${steps.map(describeStep).join(', then ')}.`, steps);
+  state.director.kimodo = null; // immediate interactive actions run directly without waiting on Kimodo
+  state.director.setScore(steps, state.improviser.intentions, { prompt: note });
+  await loadEverything();
+  if (!state.running) start();
+  else {
+    state.pending = [];
+    state.queue = [];
+    pump(state.run);
+  }
+  renderEnvBadges();
 }
 
 /** Keep two segments generated ahead of playback. */
 async function pump(run) {
   if (state.generating) return;
   while (run === state.run && state.running && state.queue.length < 2) {
-    if (!state.pending.length) {
+    if (state.partner?.active && state.partner.mode === 'mirror') {
+      const last = state.player.segment
+        ? state.player.segment.poses.subarray(state.player.endFrame * state.skeleton.numJoints * TF, (state.player.endFrame + 1) * state.skeleton.numJoints * TF)
+        : null;
+      const { place } = state.improviser.sense(last);
+      state.pending = [{ ...state.partner.mirrorTarget(place), entry: null }];
+    } else if (!state.pending.length) {
       const last = state.player.segment
         ? state.player.segment.poses.subarray(state.player.endFrame * state.skeleton.numJoints * TF, (state.player.endFrame + 1) * state.skeleton.numJoints * TF)
         : null;
@@ -364,7 +412,15 @@ async function pump(run) {
     }
     if (run !== state.run) return;
     state.player.commit();
-    state.queue.push({ poses: out.poses, activity: out.activity, endFrame: state.player.endFrame, entry: target.entry, ms: out.inferenceMs });
+    state.queue.push({
+      poses: out.poses,
+      contacts: out.contacts,
+      propFrames: target.propFrames || null,
+      activity: out.activity,
+      endFrame: state.player.endFrame,
+      entry: target.entry,
+      ms: out.inferenceMs,
+    });
   }
 }
 
@@ -391,15 +447,35 @@ function advance(dt) {
   const f = state.time * SAMPLE_RATE;
   const f0 = Math.floor(f);
   const pose = blendFrames(seg.poses, f0, Math.min(f0 + 1, seg.endFrame), f - f0, J);
+  // Sync 3D environment props (glass in hand, tilt, floor beacon) to the currently displayed frame.
+  const pf = seg.propFrames?.[f0];
+  if (pf) {
+    stage.updateEnvironment({
+      glass: { x: pf.x, y: pf.y, z: pf.z, tilt: pf.tilt },
+      beacon: state.director.env.beacon,
+    });
+  } else {
+    state.director.env.updatePropsFromPose(state.skeleton, pose);
+    stage.updateEnvironment(state.director.env);
+  }
   // Trails and echoes advance once per model frame (30 Hz); the figure every render frame.
   if (f0 !== state.lastFrame || seg !== state.lastSeg) {
     viz.update(pose, { activity: seg.activity?.[f0] });
     state.lastFrame = f0;
     state.lastSeg = seg;
     state.trail.push(1);
+    renderEnvBadges();
+    // Capture 3 snapshots (start, middle, end) across the segment for the VLM Critic contact sheet.
+    const mid = Math.floor(seg.endFrame / 2);
+    if (f0 === 1 || f0 === mid || f0 === Math.max(1, seg.endFrame - 1)) {
+      const label = `${seg.entry?.name || state.lastEntry?.name || 'Move'} · ${(f0 / SAMPLE_RATE).toFixed(1)}s`;
+      state.critic?.contactSheet.capture(stage.renderer.domElement, label);
+    }
   } else viz.figure?.setPose(pose);
   if (state.time >= end) {
+    const finished = seg;
     state.current = null;
+    if (finished.entry || state.lastEntry) evaluateSegmentWithCritic(finished);
     if (state.queue.length) begin(state.queue.shift(), state.time - end);
     else state.late++;
   }
@@ -409,7 +485,11 @@ function begin(seg, carry) {
   state.current = seg;
   // Frame 0 repeats the last played pose, except for the very first segment.
   state.time = (state.trail.length ? 1 / SAMPLE_RATE : 0) + carry;
-  if (seg.entry) showNow(seg.entry);
+  if (seg.entry) {
+    state.lastEntry = seg.entry;
+    state.critic?.contactSheet.clear();
+    showNow(seg.entry);
+  }
   pump(state.run);
 }
 
@@ -685,7 +765,269 @@ function bindView() {
   syncView();
 }
 
-// ---- UI -------------------------------------------------------------------------------
+function syncBodySliders() {
+  if (!state.constraints) return;
+  for (const k of BODY_KEYS) {
+    const input = $(`body-${k}`);
+    if (!input) continue;
+    const v = state.constraints.settings[k];
+    if (typeof v === 'number') {
+      input.value = v;
+      const out = input.parentElement.querySelector('output');
+      if (out) out.textContent = v === 0 ? 'off' : `${Math.round(v * 100)}%`;
+    }
+  }
+}
+
+function renderEnvBadges() {
+  const env = state.director?.env;
+  if (!env) return;
+  const p = $('env-posture');
+  const h = $('env-hand');
+  const s = $('env-sips');
+  if (p) {
+    p.textContent = env.seated ? 'Seated on chair' : 'Standing';
+    p.className = `badge ${env.seated ? 'good' : ''}`;
+  }
+  if (h) {
+    h.textContent = env.holding === 'glass' ? 'Holding glass' : 'Hands free';
+    h.className = `badge ${env.holding === 'glass' ? 'good' : ''}`;
+  }
+  if (s) s.textContent = `${env.glass.sips} ${env.glass.sips === 1 ? 'sip' : 'sips'}`;
+}
+
+const RPG_MOVES = [
+  { key: '1', label: 'Go to Table', run: () => triggerSteps([{ action: 'go_to', target: 'table' }], 'Action RPG: Go to the table') },
+  {
+    key: '2',
+    label: 'Sit / Stand',
+    run: () =>
+      state.director.env.seated
+        ? triggerSteps([{ action: 'stand_up' }], 'Action RPG: Stand up from chair')
+        : triggerSteps([{ action: 'sit', target: 'chair' }], 'Action RPG: Sit on the chair'),
+  },
+  { key: '3', label: 'Pick Up Glass', run: () => triggerSteps([{ action: 'pick_up', target: 'glass' }], 'Action RPG: Pick up the glass') },
+  { key: '4', label: 'Drink', run: () => triggerSteps([{ action: 'drink', target: 'glass' }], 'Action RPG: Drink from the glass') },
+  { key: '5', label: 'Put Down', run: () => triggerSteps([{ action: 'put_down', target: 'table' }], 'Action RPG: Set glass on table') },
+  {
+    key: '6',
+    label: 'Run / Dash',
+    run: () =>
+      triggerSteps(
+        [{ action: 'run', moves: [{ move: 'forward', distance: 2.2, angle: null, radius: null }], repeat: 1 }],
+        'Action RPG: Athletic dash',
+      ),
+  },
+  { key: '7', label: 'Spin (Pirouette)', run: () => triggerSteps([{ action: 'spin' }], 'Action RPG: Pirouette spin') },
+  { key: '8', label: 'Leap (Jeté)', run: () => triggerSteps([{ action: 'jump' }], 'Action RPG: Grand Jeté leap') },
+  { key: '9', label: 'Wave / Gesture', run: () => triggerSteps([{ action: 'wave' }], 'Action RPG: Wave gesture') },
+  {
+    key: '0',
+    label: 'Copy & Improvise',
+    run: () => {
+      state.partner.teachPartnerDemo('dance');
+      triggerSteps([{ action: 'imitate', mode: 'copy_and_riff', seconds: 10 }], 'Partner direction: Copy moves and improvise based on them');
+    },
+  },
+];
+
+function bindRPG() {
+  const grid = $('rpg-moves');
+  if (grid) {
+    grid.replaceChildren(
+      ...RPG_MOVES.map((m) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'rpg-btn';
+        b.innerHTML = `<span>${m.label}</span><kbd>${m.key}</kbd>`;
+        b.addEventListener('click', m.run);
+        return b;
+      }),
+    );
+  }
+  $('env-reset')?.addEventListener('click', () => {
+    state.director.env.reset();
+    stage.updateEnvironment(state.director.env);
+    renderEnvBadges();
+    setStatus('Environment props reset to their starting positions.');
+  });
+
+  // 3D Stage click / point-to-go raycasting
+  stage.onPick = (hit) => {
+    if (hit.kind === 'floor') {
+      const action = hit.shift ? 'run' : 'go_to';
+      triggerSteps(
+        [{ action, target: { x: hit.x, z: hit.z, label: `(${hit.x}, ${hit.z})` } }],
+        `Point-to-go: ${hit.shift ? 'Run' : 'Walk'} to (${hit.x}, ${hit.z})`,
+      );
+    } else if (hit.prop === 'chair') {
+      if (state.director.env.seated) triggerSteps([{ action: 'stand_up' }], 'Clicked chair: Stand up');
+      else triggerSteps([{ action: 'sit', target: 'chair' }], 'Clicked chair: Walk to chair and sit');
+    } else if (hit.prop === 'table') {
+      triggerSteps([{ action: 'go_to', target: 'table' }], 'Clicked table: Go to the table');
+    } else if (hit.prop === 'glass') {
+      triggerSteps([{ action: 'pick_up', target: 'glass' }, { action: 'drink', target: 'glass' }], 'Clicked glass: Pick up the glass and drink');
+    }
+  };
+
+  // Keyboard hotkeys 1..0 when not typing in an input or textarea
+  window.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const tag = document.activeElement?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    const found = RPG_MOVES.find((m) => m.key === e.key);
+    if (found) {
+      e.preventDefault();
+      found.run();
+    }
+  });
+}
+
+function bindPartner() {
+  const modeSel = $('partner-mode');
+  const toggleBtn = $('webcam-toggle');
+  const videoEl = $('webcam-video');
+  const statusEl = $('partner-status');
+  if (!modeSel || !state.partner) return;
+
+  modeSel.addEventListener('change', () => {
+    state.partner.mode = modeSel.value;
+    statusEl.textContent = `Mode: ${modeSel.options[modeSel.selectedIndex].text}.`;
+  });
+
+  state.partner.onUpdate = ({ gesture, triggeredGesture, phrasesLearned, latestMove }) => {
+    const parts = [`${phrasesLearned} partner phrases learned`];
+    if (gesture) parts.push(gesture.label);
+    if (latestMove) parts.push(`added ${latestMove.name}`);
+    statusEl.textContent = parts.join(' · ');
+    if (triggeredGesture) {
+      if (triggeredGesture.action === 'go_to' && triggeredGesture.target) {
+        triggerSteps([{ action: 'go_to', target: triggeredGesture.target }], `Webcam gesture: ${triggeredGesture.label}`);
+      } else if (triggeredGesture.action) {
+        triggerSteps([{ action: triggeredGesture.action }], `Webcam gesture: ${triggeredGesture.label}`);
+      }
+    }
+  };
+
+  toggleBtn?.addEventListener('click', async () => {
+    if (state.partner.active) {
+      state.partner.stopWebcam();
+      videoEl.hidden = true;
+      toggleBtn.textContent = 'Start webcam';
+      statusEl.textContent = 'Webcam stopped.';
+      return;
+    }
+    toggleBtn.disabled = true;
+    statusEl.textContent = 'Starting webcam and MediaPipe Pose Landmarker…';
+    try {
+      videoEl.hidden = false;
+      await state.partner.startWebcam(videoEl);
+      toggleBtn.textContent = 'Stop webcam';
+      statusEl.textContent = 'Webcam live: move or point to steer the performer.';
+      if (state.partner.mode === 'copy_and_riff') {
+        triggerSteps([{ action: 'imitate', mode: 'copy_and_riff', seconds: 30 }], 'Live webcam: Copy my moves and improvise based on them');
+      }
+    } catch (err) {
+      videoEl.hidden = true;
+      statusEl.textContent = `Webcam unavailable (${err.message || err}); use the demo buttons below.`;
+    } finally {
+      toggleBtn.disabled = false;
+    }
+  });
+
+  $('demo-partner-copy')?.addEventListener('click', () => {
+    state.partner.teachPartnerDemo('dance');
+    $('prompt').value = 'copy my moves and improvise based on them';
+    triggerSteps([{ action: 'imitate', mode: 'copy_and_riff', seconds: 12 }], 'Partner demo: Copy my moves and improvise based on them');
+  });
+
+  $('demo-partner-point')?.addEventListener('click', () => {
+    state.partner.mode = 'gesture';
+    modeSel.value = 'gesture';
+    const res = state.partner.teachPartnerDemo('point_table');
+    const target = res?.gesture?.target || { x: 1.35, z: -1.30, label: 'the table' };
+    triggerSteps([{ action: 'go_to', target }], `Partner gesture demo: ${res?.gesture?.label || 'Pointed to the table'}`);
+  });
+}
+
+async function evaluateSegmentWithCritic(seg) {
+  if (!state.critic || !seg) return;
+  const J = state.skeleton.numJoints;
+  const frames = [];
+  const contacts = [];
+  for (let f = 0; f <= seg.endFrame; f++) {
+    frames.push(seg.poses.slice(f * J * TF, (f + 1) * J * TF));
+    if (seg.contacts) contacts.push(seg.contacts.slice(f * 4, f * 4 + 4));
+  }
+  const imageDataUrl = state.critic.contactSheet.toDataURL();
+  await state.critic.assessSegment({
+    frames,
+    contacts: contacts.length ? contacts : null,
+    entry: seg.entry || state.lastEntry,
+    prompt: $('prompt')?.value.trim() || '',
+    imageDataUrl,
+    brainSettings: brainActive() ? brainSettings() : null,
+  });
+}
+
+function renderCriticAssessment(a) {
+  const nat = $('critic-nat');
+  const coh = $('critic-coh');
+  const phys = $('critic-phys');
+  if (nat) {
+    nat.textContent = `Naturalness ${a.naturalness}/10`;
+    nat.className = `badge ${a.naturalness >= 8 ? 'good' : 'warn'}`;
+  }
+  if (coh) {
+    coh.textContent = `Coherence ${a.coherence}/10`;
+    coh.className = `badge ${a.coherence >= 8 ? 'good' : 'warn'}`;
+  }
+  if (phys) {
+    phys.textContent = `Physics ${a.physicsScore}/10`;
+    phys.className = `badge ${a.physicsScore >= 8.5 ? 'good' : 'warn'}`;
+  }
+  const strip = $('critic-strip');
+  if (strip && a.imageDataUrl) {
+    strip.src = a.imageDataUrl;
+    strip.hidden = false;
+  }
+  const diag = $('critic-diagnosis');
+  if (diag) diag.textContent = `${a.source}: ${a.diagnosis}`;
+  const guid = $('critic-guidance');
+  if (guid) guid.textContent = a.guidance || '';
+  if (state.critic?.autoCorrect) syncBodySliders();
+}
+
+function bindCritic() {
+  const sel = $('critic-mode');
+  if (!sel || !state.critic) return;
+  sel.replaceChildren(...VLM_PROVIDERS.map((p) => new Option(p.label, p.id)));
+  sel.value = state.critic.mode;
+  sel.addEventListener('change', () => {
+    state.critic.mode = sel.value;
+  });
+  $('critic-auto')?.addEventListener('change', (e) => {
+    state.critic.autoCorrect = e.target.checked;
+  });
+  state.critic.onAssessment = renderCriticAssessment;
+  state.critic.detectOllamaVLM().then((model) => {
+    if (model && $('critic-diagnosis')) {
+      $('critic-diagnosis').textContent = `VLM Critic ready (${model} on Ollama + Biomechanical Critic).`;
+    }
+  });
+  $('critic-assess')?.addEventListener('click', () => {
+    const seg = state.current || state.player?.segment;
+    if (seg) {
+      state.critic.contactSheet.capture(stage.renderer.domElement, 'Manual snapshot');
+      evaluateSegmentWithCritic({
+        poses: seg.poses,
+        contacts: seg.contacts,
+        endFrame: seg.endFrame ?? Math.max(0, (seg.frameCount || 4) - 1),
+        entry: seg.entry || state.lastEntry,
+      });
+    }
+  });
+}
 
 function bindUI() {
   $('kimodo-check').addEventListener('click', () => checkKimodo());
@@ -703,6 +1045,9 @@ function bindUI() {
   $('dance').addEventListener('click', dance);
   bindBody();
   bindView();
+  bindRPG();
+  bindPartner();
+  bindCritic();
   const choice = savedChoice(params);
   for (const [id, value] of [['model', choice.model], ['backend', choice.backend]]) {
     if (![...$(id).options].some((o) => o.value === value)) $(id).add(new Option(value, value));

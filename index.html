@@ -47,6 +47,65 @@
       </div>
     </section>
 
+    <section id="rpg-panel">
+      <details open>
+        <summary><h2>Moves &amp; Stage (Action RPG)</h2></summary>
+        <p class="hint">Click anywhere on the 3D floor to walk there (Shift+click to run), click the table, chair or glass, or trigger environment-aware moves (keys <code>1</code>–<code>0</code>):</p>
+        <div id="env-badges" class="env-badges">
+          <span class="badge" id="env-posture">Standing</span>
+          <span class="badge" id="env-hand">Hands free</span>
+          <span class="badge" id="env-sips">0 sips</span>
+        </div>
+        <div id="rpg-moves" class="rpg-grid"></div>
+        <div class="row">
+          <button id="env-reset" type="button">Reset props &amp; scene</button>
+        </div>
+      </details>
+    </section>
+
+    <section id="partner-panel">
+      <details>
+        <summary><h2>Gesture &amp; Partner Direction</h2></summary>
+        <p class="hint">Drive the performer with your webcam or a virtual partner: point to a spot on the floor to send them there, raise both hands to jump, crouch to sit, or have them copy your moves and improvise variations.</p>
+        <div class="row">
+          <label class="check">Mode
+            <select id="partner-mode">
+              <option value="copy_and_riff">Copy moves &amp; improvise</option>
+              <option value="gesture">Gesture steering (point to go)</option>
+              <option value="mirror">Live mirror</option>
+            </select>
+          </label>
+          <button id="webcam-toggle" type="button">Start webcam</button>
+        </div>
+        <video id="webcam-video" playsinline muted hidden></video>
+        <div class="row" style="margin-top:6px">
+          <button id="demo-partner-copy" type="button">Demo: Copy &amp; improvise</button>
+          <button id="demo-partner-point" type="button">Demo: Point to table</button>
+        </div>
+        <p id="partner-status" class="hint">Webcam off. Use the demo buttons or start the camera.</p>
+      </details>
+    </section>
+
+    <section id="critic-panel">
+      <details open>
+        <summary><h2>VLM Critic &amp; Feedback</h2></summary>
+        <p class="hint">Evaluates generated segments (3-frame stage contact sheet + biomechanical telemetry) and feeds corrections back into the body constraints and improviser.</p>
+        <div class="row">
+          <label class="check">Critic <select id="critic-mode"></select></label>
+          <button id="critic-assess" type="button">Assess now</button>
+        </div>
+        <label class="check" style="margin-top:4px"><input id="critic-auto" type="checkbox" checked> Auto-correct body constraints &amp; repertoire weights</label>
+        <div id="critic-scores" class="critic-scores">
+          <span class="badge" id="critic-nat">Naturalness —</span>
+          <span class="badge" id="critic-coh">Coherence —</span>
+          <span class="badge" id="critic-phys">Physics —</span>
+        </div>
+        <img id="critic-strip" alt="3-frame movement contact sheet" hidden>
+        <p id="critic-diagnosis" class="hint">Waiting for the first movement segment…</p>
+        <p id="critic-guidance" class="hint"></p>
+      </details>
+    </section>
+
     <section id="view-panel">
       <details open>
         <summary><h2>View</h2></summary>
