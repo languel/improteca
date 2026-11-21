@@ -47,6 +47,10 @@ export async function resolveChoice(model = 'auto', backend = 'auto') {
     m = 'fp16';
     source = MODELS.fp16.source;
   }
+  if (m === 'fp16') {
+    const localFp16 = new URL('../local/models/mmm_v6_soma_fp16.onnx', import.meta.url).href;
+    if (await exists(localFp16)) source = { kind: 'file', url: localFp16 };
+  }
   return { model: m, source, backend: be, note };
 }
 

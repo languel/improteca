@@ -34,8 +34,13 @@ import { SAMPLE_RATE, POSES_PER_TOKEN, MIN_TOKENS, MAX_TOKENS } from '../engine/
 import { placePoses } from './transforms.js';
 import { analyse } from './repertoire.js';
 import { parsePrompt } from './intentions.js';
+import { StageEnvironment, applySeatedLayer, applyArmReachIK, mouthPosition } from './environment.js';
 
-export const ACTIONS = ['stand', 'walk', 'jump', 'dance'];
+export const ACTIONS = [
+  'stand', 'walk', 'run', 'go_to', 'sit', 'stand_up',
+  'pick_up', 'drink', 'put_down', 'wave', 'reach', 'crouch',
+  'spin', 'jump', 'dance', 'imitate',
+];
 export const MOVES = ['forward', 'turn', 'arc'];
 const STAGE_RADIUS = 3;
 const HOLD = 1.8; // seconds per standing target: long spans, so MotionBricks is not hurried
@@ -60,11 +65,23 @@ const KIMODO_TEXT = {
 
 const SPLIT = /\b(?:and then|then|after that|afterwards|followed by|finally|next)\b|[;.]/;
 const STAND = /\b(stand(?:s|ing)?|stay(?:ing)? still|be still|hold (?:still|a pose|the pose|it)|pose|wait(?:ing)?|rest(?:ing)?|neutral)\b/;
+const STAND_UP = /\b(stand(?:s|ing)? up|get(?:s|ting)? up|rise(?:s|ing)?(?: up)?|leave (?:the )?(?:chair|seat))\b/;
+const SIT = /\b(sit(?:s|ting)?(?: down| on (?:the )?(?:chair|seat|stool))?|take a seat|seat(?:ed)?)\b/;
+const PICK_UP = /\b(pick(?:s|ing)? up|grab(?:s|bing)?|take(?:s|ing)?|get(?:s|ting)?|lift(?:s|ing)?)\b(?:\s+(?:the|a|an|my))?\s*\b(glass|mug|cup|drink|water|soda|coffee|bottle|object|item|floor)?\b/;
+const DRINK = /\b(drink(?:s|ing)?|sip(?:s|ping)?|take a (?:drink|sip)|quaff)\b/;
+const PUT_DOWN = /\b(put(?:s|ting)? (?:it )?down|set(?:s|ting)? (?:it |the (?:glass|mug|cup) )?down|place(?:s|ing)? (?:it |the (?:glass|mug|cup) )?(?:down|back|on (?:the )?table)|return (?:the )?(?:glass|mug|cup))\b/;
+const GO_TO = /\b(go(?:es|ing)? to|walk(?:s|ing)? (?:over )?to|move(?:s|ing)? to|head(?:s|ing)? (?:over )?to|approach(?:es|ing)?)\s+(?:the\s+)?(table|chair|seat|glass|mug|cup|center|centre|stage left|stage right|left|right|front|back|camera|downstage|upstage)\b/;
+const RUN = /\b(run(?:s|ning)?|sprint(?:s|ing)?|dash(?:es|ing)?|jog(?:s|ging)?)\b/;
 const WALK = /\b(walk(?:s|ing)?|stroll(?:s|ing)?|pac(?:e|ing)|go(?:es)? (?:round|around)|step(?:s|ping)? (?:forward|around))\b/;
 const CIRCLE = /\b(circles?|circular|round|around|loop)\b/;
-const TURN = /^(?:turn|rotate|spin|face)\b/;
+const TURN = /^(?:turn|rotate|face)\b/;
+const SPIN = /^(?:do (?:a |some )?|make (?:a |some )?)?(spin|pirouette|twirl|whirl)(?:s|ing)?\b/;
 // A jump as an action: the clause starts with it ("jump", "then jump twice"), not "ballet with jumps".
-const JUMP = /^(?:do (?:a |some )?|make (?:a |some )?)?(jump|hop|leap)(?:s|ing)?\b/;
+const JUMP = /^(?:do (?:a |some )?|make (?:a |some )?)?(jump|hop|leap|jete|jeté|grand jete)(?:s|ing)?\b/;
+const WAVE = /^(?:do (?:a )?)?(wave|greet|gesture|signal|beckon|bow)(?:s|ing)?\b/;
+const REACH = /^(?:reach(?:es|ing)?(?:\s+(?:up|high|out|for the sky))?|tiptoe)\b/;
+const CROUCH = /^(?:crouch(?:es|ing)?|kneel(?:s|ing)?|squat(?:s|ting)?|duck(?:s|ing)?|pick up from (?:the )?floor)\b/;
+const IMITATE = /\b(copy(?:ing)? (?:my |the |your )?(?:moves?|movements?|motion|pose|dance)|mirror(?:ing)? me|imitate(?:s|ing)?|follow(?:ing)? my moves?|improvise based on (?:them|my moves?|it)|riff on (?:my moves?|them))\b/;
 const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, ten: 10, a: 1, an: 1 };
 const num = (s) => (s in NUMBER_WORDS ? NUMBER_WORDS[s] : Number(s));
 const NUM = '(\\d+(?:\\.\\d+)?|one|two|three|four|five|six|ten|an?)';
@@ -103,6 +120,37 @@ const step = (action, fields = {}) => ({ action, seconds: null, moves: null, rep
 
 /** One clause as a step (or null when it is not a directed action). */
 function readStep(clause) {
+  if (IMITATE.test(clause)) {
+    const mode = /\b(improvise|riff|vary|develop)\b/.test(clause) && !/\bcopy|mirror|imitate\b/.test(clause)
+      ? 'riff'
+      : /\b(improvise|riff|vary|develop)\b/.test(clause) ? 'copy_and_riff' : 'copy';
+    return step('imitate', { mode, seconds: readSeconds(clause) });
+  }
+  const goMatch = clause.match(GO_TO);
+  if (goMatch) {
+    const isRun = RUN.test(clause);
+    return step(isRun ? 'run' : 'go_to', { target: goMatch[2] });
+  }
+  if (SIT.test(clause)) return step('sit', { target: 'chair', seconds: readSeconds(clause) });
+  if (STAND_UP.test(clause)) return step('stand_up', { seconds: readSeconds(clause) });
+  if (PUT_DOWN.test(clause)) return step('put_down', { target: 'table', seconds: readSeconds(clause) });
+  if (DRINK.test(clause) && !/\bpick up|grab|take\b/.test(clause)) {
+    return step('drink', { target: 'glass', seconds: readSeconds(clause) });
+  }
+  if (PICK_UP.test(clause) && /^(?:please\s+)?(?:pick|grab|take|get|lift)\b/.test(clause)) {
+    const m = clause.match(PICK_UP);
+    const target = /\b(floor|ground)\b/.test(clause) || m?.[2] === 'floor' ? 'floor' : 'glass';
+    return step('pick_up', { target, seconds: readSeconds(clause) });
+  }
+  if (RUN.test(clause) && /^(?:please\s+)?(?:run|sprint|dash|jog)\b/.test(clause)) {
+    if (CIRCLE.test(clause)) {
+      let radius = readMetres(clause);
+      if (radius === null) radius = /\b(small|tight|little)\b/.test(clause) ? 1 : /\b(big|large|wide)\b/.test(clause) ? 2.5 : DEFAULT_RADIUS;
+      const side = readSide(clause);
+      return step('run', { moves: [{ move: 'arc', radius, angle: 360 * (side ?? 1), distance: null, free: side === null }], repeat: readTimes(clause) });
+    }
+    return step('run', { moves: [{ move: 'forward', distance: readMetres(clause) ?? DEFAULT_DISTANCE, angle: null, radius: null }] });
+  }
   if (WALK.test(clause)) {
     if (CIRCLE.test(clause)) {
       let radius = readMetres(clause);
@@ -113,6 +161,7 @@ function readStep(clause) {
     }
     return step('walk', { moves: [{ move: 'forward', distance: readMetres(clause) ?? DEFAULT_DISTANCE, angle: null, radius: null }] });
   }
+  if (SPIN.test(clause)) return step('spin', { seconds: readSeconds(clause) });
   if (TURN.test(clause)) {
     const m = clause.match(/(\d+(?:\.\d+)?)\s*(?:°|deg(?:rees?)?)/);
     const angle = m ? Number(m[1]) : /\b(around|about)\b/.test(clause) ? 180 : 90;
@@ -122,6 +171,9 @@ function readStep(clause) {
     const times = readTimes(clause);
     return step('jump', { seconds: readSeconds(clause) ?? (times ? times * 1.5 : null) });
   }
+  if (WAVE.test(clause)) return step('wave', { seconds: readSeconds(clause) });
+  if (REACH.test(clause)) return step('reach', { seconds: readSeconds(clause) });
+  if (CROUCH.test(clause)) return step('crouch', { seconds: readSeconds(clause) });
   if (STAND.test(clause)) return step('stand', { seconds: readSeconds(clause) });
   return null;
 }
@@ -133,7 +185,19 @@ function readStep(clause) {
  */
 export function parseScore(prompt) {
   const text = ` ${String(prompt).toLowerCase().replace(/\s+/g, ' ')} `;
-  const clauses = text.split(SPLIT).map((c) => c.replace(/^\s*(first|to start|start by|begin by)\b/, '').trim()).filter(Boolean);
+  const rawClauses = text.split(SPLIT).map((c) => c.replace(/^\s*(first|to start|start by|begin by)\b/, '').trim()).filter(Boolean);
+  const clauses = [];
+  for (const clause of rawClauses) {
+    // Split comma/and-separated action lists ("go to the table, sit, pick up the glass and drink")
+    // only when the first item is itself a directed action (so quality prompts like
+    // "slow and low, like sinking into water" or "vigorous ballet with jumps and turns" stay intact).
+    const parts = clause.split(/,\s*(?:and\s+)?|\s+\band\s+/).map((p) => p.trim()).filter(Boolean);
+    if (parts.length > 1 && readStep(parts[0]) !== null && parts.every((p) => readStep(p) !== null || /^(?:dance|improvise)\b/.test(p))) {
+      clauses.push(...parts);
+    } else {
+      clauses.push(clause);
+    }
+  }
   const steps = [];
   let directed = false;
   for (const clause of clauses) {
@@ -160,10 +224,20 @@ export function sanitizeSteps(raw) {
     if (m?.move === 'arc') return { move: 'arc', radius: n(m.radius, 0.3, STAGE_RADIUS) ?? DEFAULT_RADIUS, angle: n(m.angle, -1440, 1440) ?? 360, distance: null, ...(m.free ? { free: true } : {}) };
     return null;
   };
-  return raw.slice(0, 12).filter((s) => ACTIONS.includes(s?.action)).map((s) => {
+  return raw.slice(0, 16).filter((s) => ACTIONS.includes(s?.action)).map((s) => {
     const out = { action: s.action, seconds: n(s.seconds, 0.5, 600), moves: null, repeat: null };
     if (typeof s.text === 'string' && s.text.trim()) out.text = s.text.trim().slice(0, 300);
-    if (s.action === 'walk') {
+    if (typeof s.target === 'string' && s.target.trim()) out.target = s.target.trim().slice(0, 60);
+    else if (s.target && typeof s.target === 'object' && Number.isFinite(s.target.x) && Number.isFinite(s.target.z)) {
+      out.target = {
+        x: n(s.target.x, -STAGE_RADIUS - 1, STAGE_RADIUS + 1),
+        z: n(s.target.z, -STAGE_RADIUS - 1, STAGE_RADIUS + 1),
+        ...(Number.isFinite(s.target.heading) ? { heading: s.target.heading } : {}),
+        ...(typeof s.target.label === 'string' ? { label: s.target.label.slice(0, 60) } : {}),
+      };
+    }
+    if (typeof s.mode === 'string' && s.mode.trim()) out.mode = s.mode.trim().slice(0, 40);
+    if (s.action === 'walk' || (s.action === 'run' && !out.target)) {
       // Moves that do nothing (an arc of 0 degrees) are dropped.
       out.moves = (Array.isArray(s.moves) ? s.moves.slice(0, 24).map(move).filter((m) => m && (m.move !== 'arc' || Math.abs(m.angle) >= 1) && (m.move !== 'turn' || m.angle !== 0)) : []);
       if (typeof s.plan === 'string' && s.plan.trim()) out.plan = s.plan.trim().slice(0, 200);
@@ -207,14 +281,27 @@ const fmt = (x) => +x.toFixed(1);
 /** A short label for a step. */
 export function describeStep(s) {
   const secs = s.seconds ? ` ${fmt(s.seconds)} s` : '';
+  const targetLabel = typeof s.target === 'string' ? s.target : s.target?.label || (s.target ? `(${fmt(s.target.x)}, ${fmt(s.target.z)})` : '');
   if (s.action === 'stand') return `stand${secs}`;
+  if (s.action === 'stand_up') return `stand up${secs}`;
+  if (s.action === 'sit') return `sit${targetLabel ? ` on ${targetLabel}` : ''}${secs}`;
+  if (s.action === 'go_to') return `go to ${targetLabel || 'table'}`;
+  if (s.action === 'pick_up') return `pick up ${targetLabel || 'glass'}`;
+  if (s.action === 'drink') return `drink${secs}`;
+  if (s.action === 'put_down') return `put down glass`;
+  if (s.action === 'wave') return `wave${secs}`;
+  if (s.action === 'reach') return `reach high${secs}`;
+  if (s.action === 'crouch') return `crouch${secs}`;
+  if (s.action === 'spin') return `spin${secs}`;
   if (s.action === 'jump') return `jump${secs}`;
-  if (s.action === 'walk') {
+  if (s.action === 'imitate') return s.mode === 'riff' ? `improvise on partner${secs}` : s.mode === 'copy_and_riff' ? `copy & improvise${secs}` : `copy moves${secs}`;
+  if (s.action === 'walk' || s.action === 'run') {
+    if (targetLabel && !s.moves?.length) return `${s.action} to ${targetLabel}`;
     const side = (a) => (a >= 0 ? 'left' : 'right');
     const parts = (s.moves || []).map((m) => (m.move === 'forward' ? `forward ${fmt(m.distance)} m`
       : m.move === 'turn' ? `turn ${side(m.angle)} ${fmt(Math.abs(m.angle))}°`
         : `arc ${m.free ? '' : `${side(m.angle)} `}${fmt(Math.abs(m.angle))}° r ${fmt(m.radius)} m`));
-    return `walk: ${parts.join(', ')}${s.repeat > 1 ? `, ×${s.repeat}` : ''}`;
+    return `${s.action}: ${parts.join(', ')}${s.repeat > 1 ? `, ×${s.repeat}` : ''}`;
   }
   return `dance${secs}`;
 }
@@ -456,13 +543,17 @@ export function fitOnStage(start, step, walking) {
   return best;
 }
 
+const ENV_ACTIONS = new Set(['go_to', 'sit', 'stand_up', 'pick_up', 'drink', 'put_down', 'imitate', 'wave', 'reach', 'crouch', 'spin', 'run']);
+const ONE_SHOT_ACTIONS = new Set(['walk', 'run', 'go_to', 'sit', 'stand_up', 'pick_up', 'drink', 'put_down', 'wave', 'reach', 'crouch', 'spin']);
+
 export class Director {
   /**
-   * @param {{ improviser: import('./improviser.js').Improviser, skeleton: object, kimodo?: import('./kimodo.js').KimodoClient }} opts
+   * @param {{ improviser: import('./improviser.js').Improviser, skeleton: object, kimodo?: import('./kimodo.js').KimodoClient, env?: StageEnvironment }} opts
    */
-  constructor({ improviser, skeleton, kimodo = null }) {
+  constructor({ improviser, skeleton, kimodo = null, env = null }) {
     this.improviser = improviser;
     this.kimodo = kimodo; // text-to-motion for every step, when its server is running
+    this.env = env || new StageEnvironment();
     this.prompt = '';
     this.onKimodo = null; // (event: { state, step, text, ms?, error? }) => void, for the page
     this.skeleton = skeleton;
@@ -474,14 +565,17 @@ export class Director {
     this.announced = false;
     this.standing = null;
     this.walking = null;
+    this.running = null;
     this.materialFrom = 0;
+    this.imitateStep = 0;
+    this.lastCopied = null;
   }
 
   /**
    * A new score (steps may be []: pure improvisation with the intentions).
-   * With Kimodo, every step is generated from text: a prompt without steps
+   * With Kimodo, general text steps are generated from text: a prompt without steps
    * becomes one open-ended dance, and a score ending in a walk or a jump
-   * ends standing.
+   * ends standing. Environment-aware interactions run directly against this.env.
    */
   setScore(steps, intentions, { prompt = '', summary = '' } = {}) {
     this.steps = (steps || []).map((s) => ({ ...s }));
@@ -490,17 +584,19 @@ export class Director {
     this.index = 0;
     this.planned = 0;
     this.announced = false;
+    this.imitateStep = 0;
     this.run = (this.run || 0) + 1;
     if (this.kimodo?.ready) {
       if (!this.steps.length) this.steps.push({ action: 'dance', seconds: null, moves: null, repeat: null, text: null, free: true, summary });
-      if (['walk', 'jump'].includes(this.steps[this.steps.length - 1].action)) {
+      if (['walk', 'jump'].includes(this.steps[this.steps.length - 1].action) && !this.steps[this.steps.length - 1].target) {
         this.steps.push({ action: 'stand', seconds: null, moves: null, repeat: null, text: null, implied: true });
       }
       this.steps.forEach((step, i) => {
+        if (ENV_ACTIONS.has(step.action) || (step.action === 'walk' && step.target)) return;
         step.k = { queue: [], pending: null, failed: false, finished: false, chunks: null, next: 0, seed: (this.improviser.seed * 7919 + i * 101) % 100000 };
       });
       // Ask for every step now (the server takes them in order), so later steps are ready in time.
-      this.steps.forEach((step, i) => this.request(step, i));
+      this.steps.forEach((step, i) => step.k && this.request(step, i));
     }
     this.improviser.setIntentions(this.intentionsFor(this.steps[0]));
   }
@@ -509,6 +605,7 @@ export class Director {
   intentionsFor(step) {
     const base = step?.intentions ?? this.intentions ?? {};
     if (step?.action === 'jump') return { ...base, jump: 1, energy: Math.max(base.energy ?? 0, 0.75), stillness: 0, travel: null, variety: 0.3, tempo: 1 };
+    if (step?.action === 'spin') return { ...base, turn: 1, energy: Math.max(base.energy ?? 0, 0.7), tempo: 1 };
     return base;
   }
 
@@ -535,8 +632,9 @@ export class Director {
       const s = this.steps[this.index];
       const last = this.index === this.steps.length - 1;
       const limit = s.k && !s.k.failed ? (s.k.finished ? 0 : Infinity)
-        : s.action === 'walk' ? (s.done ? 0 : Infinity)
+        : ONE_SHOT_ACTIONS.has(s.action) ? (s.done ? 0 : Infinity)
         : s.action === 'jump' ? (s.seconds ?? DEFAULT_JUMP)
+        : s.action === 'imitate' ? (s.seconds ?? (last ? Infinity : 6))
           : last ? Infinity : (s.seconds ?? (s.action === 'stand' ? DEFAULT_STAND : DEFAULT_DANCE));
       if (this.planned < limit) return { step: s, last };
       this.index++;
@@ -545,7 +643,7 @@ export class Director {
       const next = this.steps[this.index];
       if (next) this.improviser.setIntentions(this.intentionsFor(next));
     }
-    // After a walk or a jump as the last step: stand where it ended.
+    // After a directed score: stay seated if on the chair, or stand where it ended.
     return { step: { action: 'stand', seconds: null, implied: true }, last: true };
   }
 
@@ -554,7 +652,13 @@ export class Director {
    * @param {Float64Array|null} pose  the last generated pose (null at the start)
    */
   next(pose) {
-    if (!this.steps.length) return this.improviser.next(pose);
+    if (!this.steps.length) {
+      if (this.env.seated && pose) {
+        // Stand up before free dancing if previously seated.
+        return this.standUp(this.improviser.sense(pose).place, { action: 'stand_up' }, 'stand up', false);
+      }
+      return this.improviser.next(pose);
+    }
     const { place } = this.improviser.sense(pose);
     if (!pose) {
       // Begin from standing, whatever comes first.
@@ -570,16 +674,53 @@ export class Director {
     if (step.action === 'stand') {
       const out = this.stand(place, last ? 3 : Math.max(1, Math.ceil(((step.seconds ?? DEFAULT_STAND) - this.planned) / HOLD)), phrase, pose);
       if (out) return out;
+    } else if (step.action === 'go_to') {
+      const out = this.goTo(place, step, phrase, false);
+      if (out) return out;
+    } else if (step.action === 'run') {
+      const out = step.target ? this.goTo(place, step, phrase, true) : this.walk(place, step, phrase, true);
+      if (out) return out;
+    } else if (step.action === 'sit') {
+      const out = this.sit(place, step, phrase, pose);
+      if (out) return out;
+    } else if (step.action === 'stand_up') {
+      const out = this.standUp(place, step, phrase, true);
+      if (out) return out;
+    } else if (step.action === 'pick_up') {
+      const out = this.pickUp(place, step, phrase, pose);
+      if (out) return out;
+    } else if (step.action === 'drink') {
+      const out = this.drink(place, step, phrase, pose);
+      if (out) return out;
+    } else if (step.action === 'put_down') {
+      const out = this.putDown(place, step, phrase, pose);
+      if (out) return out;
+    } else if (step.action === 'spin') {
+      const out = this.spin(place, step, phrase);
+      if (out) return out;
+    } else if (step.action === 'wave' || step.action === 'reach' || step.action === 'crouch') {
+      const out = this.expressiveAction(place, step, phrase, pose);
+      if (out) return out;
+    } else if (step.action === 'imitate') {
+      const out = this.imitate(place, step, phrase, pose);
+      if (out) return out;
     } else if (step.action === 'jump') {
+      if (this.env.seated) return this.standUp(place, step, phrase, false);
       const out = this.jump(place, phrase);
       if (out) return out;
     } else if (step.action === 'walk') {
-      const out = this.walk(place, step, phrase);
+      if (step.target) {
+        const out = this.goTo(place, step, phrase, false);
+        if (out) return out;
+      }
+      if (this.env.seated) return this.standUp(place, step, phrase, false);
+      const out = this.walk(place, step, phrase, false);
       if (out) return out;
       // No walking material: travel with the improviser instead.
       step.done = true;
       this.improviser.setIntentions({ ...this.intentions, travel: 0.95, jump: 0, turn: 0.2 });
     }
+    if (this.env.seated) return this.standUp(place, step, phrase, false);
     const out = this.improviser.next(pose);
     this.planned += out.targets.length * 1.1;
     out.entry.phrase = `${phrase} · ${out.entry.phrase || ''}`.replace(/ · $/, '');
@@ -794,8 +935,95 @@ export class Director {
     return placePoses(poses, this.J, T);
   }
 
-  /** Hold a natural standing pose at the dancer's place: `count` targets. */
+  /** A single calm local pose placed at `place`, using learned standing material or the current/reference pose. */
+  basePose(place, pose = null, timeOffset = 0) {
+    const { standing } = this.material();
+    const J = this.J;
+    if (standing) {
+      const source = standing.source;
+      const a = analysisOf(source, this.skeleton);
+      const fr = a.frames[Math.round(standing.rest * SAMPLE_RATE)];
+      const from = { x: fr.root[0], z: fr.root[2], heading: fr.heading };
+      const t = Math.min(source.clip.duration, Math.max(0, standing.rest + timeOffset));
+      const one = source.clip.sample(t);
+      return this.place(one, from, place.x, place.z, place.heading);
+    }
+    if (pose) return Float64Array.from(pose);
+    const ref = Float64Array.from(this.skeleton.reference);
+    ref[0] = place.x;
+    ref[2] = place.z;
+    return ref;
+  }
+
+  /** Build a 30 Hz directPoses target with a 4-pose endpoint window and synchronous + post-alignment IK modifier. */
+  makeDirectTarget(frameCount, movement, buildFrame) {
+    const J = this.J;
+    const directPoses = new Float64Array(frameCount * J * TF);
+    const directContacts = new Float32Array(frameCount * 4);
+    const propFrames = [];
+    const runBuild = (posesArr, contactsArr, preserveFirst = false) => {
+      const cache = {};
+      propFrames.length = 0;
+      const firstPose = preserveFirst ? Float64Array.from(posesArr.subarray(0, J * TF)) : null;
+      for (let f = 0; f < frameCount; f++) {
+        const local = posesArr.subarray(f * J * TF, (f + 1) * J * TF);
+        const c = contactsArr.subarray(f * 4, f * 4 + 4);
+        c.set([1, 1, 1, 1]);
+        buildFrame(local, f, frameCount, c, cache);
+        if (preserveFirst && f === 0) local.set(firstPose);
+        this.env.updatePropsFromPose(this.skeleton, local);
+        propFrames.push({
+          heldBy: this.env.glass.heldBy,
+          holding: this.env.holding,
+          seated: this.env.seated,
+          x: this.env.glass.x,
+          y: this.env.glass.y,
+          z: this.env.glass.z,
+          tilt: this.env.glass.tilt,
+        });
+      }
+    };
+    runBuild(directPoses, directContacts, false);
+    const poses = new Float64Array(POSES_PER_TOKEN * J * TF);
+    for (let i = 0; i < POSES_PER_TOKEN; i++) {
+      const f = Math.max(0, frameCount - POSES_PER_TOKEN + i);
+      poses.set(directPoses.subarray(f * J * TF, (f + 1) * J * TF), i * J * TF);
+    }
+    const seconds = frameCount / SAMPLE_RATE;
+    return {
+      poses,
+      directPoses,
+      directContacts,
+      propFrames,
+      modifier: (outPoses, outContacts) => runBuild(outPoses, outContacts, true),
+      numPoses: POSES_PER_TOKEN,
+      tokens: tokensFor(seconds),
+      early: 0,
+      movement,
+    };
+  }
+
+  /** Hold a natural standing (or seated) pose at the dancer's place: `count` targets. */
   stand(place, count, phrase = 'start', pose = null) {
+    if (this.env.seated) {
+      const chair = this.env.chair;
+      const anchor = chair.seatAnchor;
+      const holdPos = [1.25, 0.86, -1.14];
+      const targets = Array.from({ length: count }, () => this.makeDirectTarget(Math.round(HOLD * SAMPLE_RATE), 'stand', (local, f) => {
+        local.set(this.basePose(anchor, pose, (f % 30) / SAMPLE_RATE));
+        applySeatedLayer(this.skeleton, local, chair, 1);
+        if (this.env.holding === 'glass') {
+          applyArmReachIK(this.skeleton, local, holdPos, 0.85, { hand: 'right', spineLean: 0.04 });
+        }
+      }));
+      this.planned += count * HOLD;
+      let entry = null;
+      if (!this.announced) {
+        this.announced = true;
+        entry = this.entry('Seated at the table', null, ['as asked'], [this.env.holding === 'glass' ? 'seated, holding the glass' : 'seated on the chair'], phrase, targets.length);
+      }
+      return { targets, entry };
+    }
     const { standing } = this.material();
     let windows;
     let source = null;
@@ -832,6 +1060,411 @@ export class Director {
     return { targets, entry };
   }
 
+  /** Navigate to a named stage prop (table, chair, glass, center) or clicked coordinate {x, z}. */
+  goTo(place, step, phrase, isRun = false) {
+    const dest = this.env.resolveTarget(step.target, place);
+    this.env.beacon = { active: true, x: dest.x, z: dest.z, label: dest.label };
+    if (this.env.seated) {
+      // If asked to go somewhere away from the chair/table while seated, stand up first.
+      if (Math.hypot(dest.x - this.env.chair.approachAnchor.x, dest.z - this.env.chair.approachAnchor.z) > 0.35) {
+        return this.standUp(place, { action: 'stand_up' }, phrase, false);
+      }
+      step.done = true;
+      return this.stand(place, 1, phrase);
+    }
+    const moves = this.env.planMovesTo(place, dest);
+    if (!moves.length) {
+      step.done = true;
+      this.anchor = { x: dest.x, z: dest.z, heading: dest.heading };
+      return this.stand(this.anchor, 1, phrase);
+    }
+    const walkStep = { ...step, action: isRun ? 'run' : 'walk', moves, repeat: 1, noFitStage: true, destLabel: dest.label };
+    const out = this.walk(place, walkStep, phrase, isRun);
+    if (out) {
+      step.done = true;
+      return out;
+    }
+    // Fallback when no walking clip is loaded yet: generate a direct locomotion transition to dest.
+    const dist = Math.hypot(dest.x - place.x, dest.z - place.z);
+    const secs = Math.max(0.8, dist / (isRun ? 2.2 : 1.15));
+    const frames = Math.max(24, Math.round(secs * SAMPLE_RATE));
+    const target = this.makeDirectTarget(frames, isRun ? 'run' : 'walk', (local, f, n) => {
+      const u = n > 1 ? f / (n - 1) : 1;
+      const s = u * u * (3 - 2 * u);
+      const h = place.heading + wrapAngle(dest.heading - place.heading) * s;
+      const p = { x: place.x + (dest.x - place.x) * s, z: place.z + (dest.z - place.z) * s, heading: h };
+      local.set(this.basePose(p, null, f / SAMPLE_RATE));
+    });
+    step.done = true;
+    this.planned += secs;
+    const entry = this.entry(`${isRun ? 'Running' : 'Walking'} to ${dest.label}`, null, ['as asked'], [`arrived at ${dest.label}`], phrase, 1);
+    return { targets: [target], entry };
+  }
+
+  /** Sit down on the chair (walking to the chair first if not already there). */
+  sit(place, step, phrase, pose = null) {
+    const chair = this.env.chair;
+    const approach = chair.approachAnchor;
+    if (!this.env.seated && Math.hypot(place.x - approach.x, place.z - approach.z) > 0.45) {
+      // Approach the chair first; step.done remains false so sit runs upon arrival.
+      return this.goTo(place, { action: 'go_to', target: 'chair' }, phrase, false);
+    }
+    const frames = 45; // 1.5 s smooth sit-down
+    const wasSeated = this.env.seated;
+    const holdingGlass = this.env.holding === 'glass';
+    const holdPos = [1.25, 0.86, -1.14];
+    const target = this.makeDirectTarget(frames, 'sit', (local, f, n, c, cache) => {
+      const u = wasSeated ? 1 : n > 1 ? f / (n - 1) : 1;
+      const curPlace = {
+        x: place.x + (approach.x - place.x) * Math.min(1, u * 2),
+        z: place.z + (approach.z - place.z) * Math.min(1, u * 2),
+        heading: place.heading + wrapAngle(chair.heading - place.heading) * Math.min(1, u * 2),
+      };
+      local.set(this.basePose(curPlace, pose, f / SAMPLE_RATE));
+      this.env.seated = u >= 0.85;
+      applySeatedLayer(this.skeleton, local, chair, u, { leftArmRest: true, cache });
+      // Natural forward torso counterbalance as the hips lower onto the chair seat.
+      const balanceLean = wasSeated ? 0.04 : Math.sin(u * Math.PI) * 0.28;
+      if (holdingGlass) {
+        applyArmReachIK(this.skeleton, local, holdPos, 0.85, { hand: 'right', spineLean: balanceLean, cache });
+      } else if (balanceLean > 0.01) {
+        const rightLap = [chair.seatAnchor.x - 0.16, chair.seatAnchor.y + 0.08, chair.seatAnchor.z + 0.25];
+        applyArmReachIK(this.skeleton, local, rightLap, u * 0.85, { hand: 'right', spineLean: balanceLean, cache });
+      }
+    });
+    this.env.seated = true;
+    this.anchor = { x: chair.seatAnchor.x, z: chair.seatAnchor.z, heading: chair.heading };
+    step.done = true;
+    this.planned += frames / SAMPLE_RATE;
+    const entry = this.entry('Sitting on the chair', this.standing?.source || null, ['as asked'],
+      ['pelvis lowered onto chair seat (0.53 m)', 'feet planted, knees at 104°'], phrase, 1);
+    return { targets: [target], entry };
+  }
+
+  /** Rise smoothly from the chair to standing. */
+  standUp(place, step, phrase, markDone = true) {
+    const chair = this.env.chair;
+    const approach = chair.approachAnchor;
+    const frames = 42; // 1.4 s smooth stand-up
+    const holdingGlass = this.env.holding === 'glass';
+    const target = this.makeDirectTarget(frames, 'stand_up', (local, f, n, c, cache) => {
+      const u = n > 1 ? 1 - f / (n - 1) : 0; // 1 (seated) -> 0 (standing)
+      local.set(this.basePose(approach, null, f / SAMPLE_RATE));
+      this.env.seated = u > 0.2;
+      applySeatedLayer(this.skeleton, local, chair, u, { leftArmRest: true, cache });
+      const balanceLean = Math.sin(u * Math.PI) * 0.30;
+      if (holdingGlass) {
+        const holdPos = [1.25, 1.12 - 0.26 * u, -1.14];
+        applyArmReachIK(this.skeleton, local, holdPos, 0.85, { hand: 'right', spineLean: balanceLean, cache });
+      } else if (balanceLean > 0.01) {
+        const rightSide = [approach.x - 0.22, 0.90, approach.z + 0.08];
+        applyArmReachIK(this.skeleton, local, rightSide, (1 - u) * 0.5, { hand: 'right', spineLean: balanceLean, cache });
+      }
+    });
+    this.env.seated = false;
+    this.anchor = { ...approach };
+    if (markDone) step.done = true;
+    this.planned += frames / SAMPLE_RATE;
+    const entry = this.entry('Standing up from the chair', this.standing?.source || null, ['as asked'], ['weight shifted forward over feet, rose to standing'], phrase, 1);
+    return { targets: [target], entry };
+  }
+
+  /** Pick up the glass from the table (or an object from the floor), using upper-body layering if seated. */
+  pickUp(place, step, phrase, pose = null) {
+    if (step.target === 'floor') {
+      if (this.env.seated) return this.standUp(place, step, phrase, false);
+      const frames = 54;
+      const floorSpot = [place.x + Math.sin(place.heading) * 0.32, 0.08, place.z + Math.cos(place.heading) * 0.32];
+      const target = this.makeDirectTarget(frames, 'pick_up', (local, f, n, c, cache) => {
+        const u = n > 1 ? f / (n - 1) : 1;
+        const dip = Math.sin(u * Math.PI);
+        local.set(this.basePose(place, pose, f / SAMPLE_RATE));
+        const crouchChair = {
+          seatAnchor: { x: place.x, y: 1.01 - 0.42 * dip, z: place.z, heading: place.heading },
+          feet: {
+            left: [place.x + Math.cos(place.heading) * 0.12, 0.08, place.z - Math.sin(place.heading) * 0.12],
+            right: [place.x - Math.cos(place.heading) * 0.12, 0.08, place.z + Math.sin(place.heading) * 0.12],
+          },
+        };
+        applySeatedLayer(this.skeleton, local, crouchChair, dip, { leftArmRest: false, cache });
+        applyArmReachIK(this.skeleton, local, floorSpot, dip, { hand: 'right', spineLean: 0.35 * dip, headPitch: -0.25 * dip, cache });
+      });
+      step.done = true;
+      this.planned += frames / SAMPLE_RATE;
+      const entry = this.entry('Picking up from the floor', null, ['as asked'], ['crouched and reached to the floor'], phrase, 1);
+      return { targets: [target], entry };
+    }
+
+    // Picking up the glass from the table.
+    const tableAnchor = this.env.table.standAnchor;
+    if (!this.env.seated && Math.hypot(place.x - tableAnchor.x, place.z - tableAnchor.z) > 0.65) {
+      return this.goTo(place, { action: 'go_to', target: 'table' }, phrase, false);
+    }
+    const chair = this.env.chair;
+    const isSeated = this.env.seated;
+    const glassPos = [...this.env.glass.home];
+    const holdPos = [1.25, isSeated ? 0.86 : 1.12, -1.14];
+    const frames = 48; // 1.6 s reach, grasp, and lift
+    const target = this.makeDirectTarget(frames, 'pick_up', (local, f, n, c, cache) => {
+      const u = n > 1 ? f / (n - 1) : 1;
+      const baseP = isSeated ? chair.seatAnchor : tableAnchor;
+      local.set(this.basePose(baseP, pose, f / SAMPLE_RATE));
+      if (isSeated) applySeatedLayer(this.skeleton, local, chair, 1, { leftArmRest: true, cache });
+
+      if (u <= 0.62) {
+        // Reach toward the glass on the table.
+        const w = Math.sin((u / 0.62) * (Math.PI / 2));
+        this.env.glass.heldBy = null;
+        this.env.holding = null;
+        [this.env.glass.x, this.env.glass.y, this.env.glass.z] = glassPos;
+        this.env.glass.tilt = 0;
+        applyArmReachIK(this.skeleton, local, glassPos, w, {
+          hand: 'right',
+          spineLean: (isSeated ? 0.24 : 0.18) * w,
+          headPitch: -0.20 * w,
+          cache,
+        });
+      } else {
+        // Grasp the glass and lift it to a poised hold position.
+        const v = (u - 0.62) / 0.38;
+        const s = v * v * (3 - 2 * v);
+        this.env.glass.heldBy = 'RightHand';
+        this.env.holding = 'glass';
+        this.env.glass.tilt = 0;
+        const handGoal = [
+          glassPos[0] + (holdPos[0] - glassPos[0]) * s,
+          glassPos[1] + (holdPos[1] - glassPos[1]) * s,
+          glassPos[2] + (holdPos[2] - glassPos[2]) * s,
+        ];
+        const lean = (isSeated ? 0.24 : 0.18) * (1 - s * 0.75);
+        applyArmReachIK(this.skeleton, local, handGoal, 1, {
+          hand: 'right',
+          spineLean: lean,
+          headPitch: -0.20 * (1 - s),
+          cache,
+        });
+      }
+    });
+    this.env.glass.heldBy = 'RightHand';
+    this.env.holding = 'glass';
+    step.done = true;
+    this.planned += frames / SAMPLE_RATE;
+    const entry = this.entry('Picking up the glass', null, ['as asked'],
+      [isSeated ? 'upper-body reach while seated on the chair' : 'reached to the table', 'right-hand IK grasped glass at (1.24, 0.76, -0.98)'], phrase, 1);
+    return { targets: [target], entry };
+  }
+
+  /** Drink from the glass (picking it up from the table first if not already holding it). */
+  drink(place, step, phrase, pose = null) {
+    const tableAnchor = this.env.table.standAnchor;
+    if (!this.env.seated && Math.hypot(place.x - tableAnchor.x, place.z - tableAnchor.z) > 0.65) {
+      return this.goTo(place, { action: 'go_to', target: 'table' }, phrase, false);
+    }
+    if (this.env.holding !== 'glass') {
+      return this.pickUp(place, { action: 'pick_up', target: 'glass' }, phrase, pose);
+    }
+    const chair = this.env.chair;
+    const isSeated = this.env.seated;
+    const holdPos = [1.25, isSeated ? 0.86 : 1.12, -1.14];
+    const frames = 60; // 2.0 s bring glass to mouth, tilt to sip, and lower
+    const target = this.makeDirectTarget(frames, 'drink', (local, f, n, c, cache) => {
+      const u = n > 1 ? f / (n - 1) : 1;
+      const baseP = isSeated ? chair.seatAnchor : tableAnchor;
+      local.set(this.basePose(baseP, pose, f / SAMPLE_RATE));
+      if (isSeated) applySeatedLayer(this.skeleton, local, chair, 1, { leftArmRest: true, cache });
+
+      this.env.glass.heldBy = 'RightHand';
+      this.env.holding = 'glass';
+      const mouth = mouthPosition(this.skeleton, local);
+      let s = 0;
+      let headPitch = 0;
+      let tilt = 0;
+      if (u < 0.30) {
+        const v = u / 0.30;
+        s = v * v * (3 - 2 * v);
+        tilt = 0.25 * s;
+        headPitch = 0.08 * s;
+      } else if (u <= 0.72) {
+        s = 1;
+        const sip = Math.sin(((u - 0.30) / 0.42) * Math.PI);
+        tilt = 0.25 + 0.65 * sip;
+        headPitch = 0.08 + 0.22 * sip;
+      } else {
+        const v = 1 - (u - 0.72) / 0.28;
+        s = v * v * (3 - 2 * v);
+        tilt = 0.20 * s;
+        headPitch = 0.08 * s;
+      }
+      this.env.glass.tilt = tilt;
+      const handGoal = [
+        holdPos[0] + (mouth[0] - holdPos[0]) * s,
+        holdPos[1] + (mouth[1] - holdPos[1]) * s,
+        holdPos[2] + (mouth[2] - holdPos[2]) * s,
+      ];
+      applyArmReachIK(this.skeleton, local, handGoal, 1, {
+        hand: 'right',
+        spineLean: isSeated ? 0.05 * (1 - s) : 0,
+        headPitch,
+        cache,
+      });
+    });
+    this.env.glass.sips++;
+    this.env.glass.tilt = 0;
+    step.done = true;
+    this.planned += frames / SAMPLE_RATE;
+    const entry = this.entry('Drinking from the glass', null, ['as asked'],
+      [isSeated ? 'seated at the table' : 'standing at the table', 'brought glass to mouth and tilted to drink'], phrase, 1);
+    return { targets: [target], entry };
+  }
+
+  /** Place the held glass back onto the table. */
+  putDown(place, step, phrase, pose = null) {
+    const tableAnchor = this.env.table.standAnchor;
+    if (!this.env.seated && Math.hypot(place.x - tableAnchor.x, place.z - tableAnchor.z) > 0.65) {
+      return this.goTo(place, { action: 'go_to', target: 'table' }, phrase, false);
+    }
+    const chair = this.env.chair;
+    const isSeated = this.env.seated;
+    const glassPos = [...this.env.glass.home];
+    const holdPos = [1.25, isSeated ? 0.86 : 1.12, -1.14];
+    const frames = 45;
+    const target = this.makeDirectTarget(frames, 'put_down', (local, f, n, c, cache) => {
+      const u = n > 1 ? f / (n - 1) : 1;
+      const baseP = isSeated ? chair.seatAnchor : tableAnchor;
+      local.set(this.basePose(baseP, pose, f / SAMPLE_RATE));
+      if (isSeated) applySeatedLayer(this.skeleton, local, chair, 1, { leftArmRest: true, cache });
+      if (u <= 0.58) {
+        const v = u / 0.58;
+        const s = v * v * (3 - 2 * v);
+        this.env.glass.heldBy = 'RightHand';
+        this.env.holding = 'glass';
+        const handGoal = [
+          holdPos[0] + (glassPos[0] - holdPos[0]) * s,
+          holdPos[1] + (glassPos[1] - holdPos[1]) * s,
+          holdPos[2] + (glassPos[2] - holdPos[2]) * s,
+        ];
+        applyArmReachIK(this.skeleton, local, handGoal, 1, { hand: 'right', spineLean: 0.22 * s, headPitch: -0.18 * s, cache });
+      } else {
+        const v = 1 - (u - 0.58) / 0.42;
+        const s = v * v * (3 - 2 * v);
+        this.env.glass.heldBy = null;
+        this.env.holding = null;
+        [this.env.glass.x, this.env.glass.y, this.env.glass.z] = glassPos;
+        this.env.glass.tilt = 0;
+        applyArmReachIK(this.skeleton, local, glassPos, s, { hand: 'right', spineLean: 0.22 * s, headPitch: -0.18 * s, cache });
+      }
+    });
+    this.env.glass.heldBy = null;
+    this.env.holding = null;
+    [this.env.glass.x, this.env.glass.y, this.env.glass.z] = glassPos;
+    this.env.glass.tilt = 0;
+    step.done = true;
+    this.planned += frames / SAMPLE_RATE;
+    const entry = this.entry('Setting the glass on the table', null, ['as asked'], ['placed glass back on table'], phrase, 1);
+    return { targets: [target], entry };
+  }
+
+  /** Spin / pirouette from the repertoire (or a 360-degree turn in place). */
+  spin(place, step, phrase) {
+    if (this.env.seated) return this.standUp(place, step, phrase, false);
+    const imp = this.improviser;
+    const turns = [...imp.movements].sort((a, b) => Math.abs(b.turn) - Math.abs(a.turn));
+    if (turns.length && Math.abs(turns[0].turn) > 1.2) {
+      const pick = turns[0];
+      const { targets, transforms } = imp.realise(pick, { mirrored: false, retro: false }, place, 1);
+      step.done = true;
+      this.planned += pick.duration;
+      const entry = this.entry(pick.name, pick.source, ['as asked', `turns ${Math.round((Math.abs(pick.turn) * 180) / Math.PI)}°`], transforms, phrase, targets.length);
+      entry.movement = pick.id;
+      return { targets, entry };
+    }
+    return this.walk(place, { action: 'walk', moves: [{ move: 'turn', angle: 360, distance: null, radius: null }], repeat: 1 }, phrase);
+  }
+
+  /** Wave, high reach, or crouch. */
+  expressiveAction(place, step, phrase, pose = null) {
+    if (step.action === 'crouch' && this.env.seated) return this.standUp(place, step, phrase, false);
+    if (step.action === 'crouch') return this.pickUp(place, { ...step, action: 'pick_up', target: 'floor' }, phrase, pose);
+    const frames = 48;
+    const isSeated = this.env.seated;
+    const chair = this.env.chair;
+    const target = this.makeDirectTarget(frames, step.action, (local, f, n, c, cache) => {
+      const u = n > 1 ? f / (n - 1) : 1;
+      const env = Math.sin(u * Math.PI);
+      const baseP = isSeated ? chair.seatAnchor : place;
+      local.set(this.basePose(baseP, pose, f / SAMPLE_RATE));
+      if (isSeated) applySeatedLayer(this.skeleton, local, chair, 1, { leftArmRest: step.action !== 'reach', cache });
+      const fx = Math.sin(baseP.heading);
+      const fz = Math.cos(baseP.heading);
+      const rx = -Math.cos(baseP.heading);
+      const rz = Math.sin(baseP.heading);
+      const baseH = isSeated ? 1.15 : 1.62;
+      if (step.action === 'wave') {
+        const sway = Math.sin(u * Math.PI * 5) * 0.14;
+        const goal = [baseP.x + rx * (0.28 + sway) + fx * 0.22, baseH, baseP.z + rz * (0.28 + sway) + fz * 0.22];
+        applyArmReachIK(this.skeleton, local, goal, env, { hand: 'right', headPitch: 0.08 * env, cache });
+      } else {
+        // High two-handed reach.
+        const goalR = [baseP.x + rx * 0.22 + fx * 0.12, baseH + 0.22, baseP.z + rz * 0.22 + fz * 0.12];
+        const goalL = [baseP.x - rx * 0.22 + fx * 0.12, baseH + 0.22, baseP.z - rz * 0.22 + fz * 0.12];
+        applyArmReachIK(this.skeleton, local, goalR, env, { hand: 'right', headPitch: 0.20 * env, cache });
+        applyArmReachIK(this.skeleton, local, goalL, env, { hand: 'left', cache });
+      }
+    });
+    step.done = true;
+    this.planned += frames / SAMPLE_RATE;
+    const label = step.action === 'wave' ? 'Waving' : 'Reaching high';
+    const entry = this.entry(label, null, ['as asked'], [step.action === 'wave' ? 'gesture with right hand' : 'both arms extended upward'], phrase, 1);
+    return { targets: [target], entry };
+  }
+
+  /**
+   * Copy a partner/video/webcam movement and improvise variations on it
+   * ("copy my moves and improvise based on them").
+   */
+  imitate(place, step, phrase, pose = null) {
+    if (this.env.seated) return this.standUp(place, step, phrase, false);
+    const imp = this.improviser;
+    const partnerPool = imp.movements.filter((m) => (m.tags || []).some((t) => ['partner', 'webcam', 'film'].includes(t)));
+    const pool = partnerPool.length ? partnerPool : imp.movements;
+    if (!pool.length) return this.stand(place, 1, phrase, pose);
+
+    const k = this.imitateStep++;
+    const isCopy = step.mode === 'copy' || (step.mode !== 'riff' && k % 3 === 0);
+    let m;
+    let v = { mirrored: false, retro: false };
+    let tempoScale = 1;
+    let opLabel = 'copied faithfully from leader';
+    if (isCopy || !this.lastCopied) {
+      m = pool[k % pool.length];
+      this.lastCopied = m;
+    } else {
+      m = this.lastCopied;
+      const op = ['mirror', 'retrograde', 'faster', 'relative'][(k - 1) % 4];
+      if (op === 'mirror') {
+        v = { mirrored: true, retro: false };
+        opLabel = `improvised variation: mirrored ${m.name}`;
+      } else if (op === 'retrograde') {
+        v = { mirrored: false, retro: true };
+        opLabel = `improvised variation: retrograde of ${m.name}`;
+      } else if (op === 'faster') {
+        v = { mirrored: true, retro: false };
+        tempoScale = 1.25;
+        opLabel = `improvised variation: accelerated riff on ${m.name}`;
+      } else {
+        const rel = imp.relative(m, imp.recent.slice(-2));
+        opLabel = `improvised answer to ${m.name} via ${rel.name}`;
+        m = rel;
+      }
+    }
+    imp.recent.push(m.id);
+    const { targets, transforms } = imp.realise(m, v, place, tempoScale);
+    this.planned += m.duration / tempoScale;
+    const entry = this.entry(m.name, m.source, ['partner direction', opLabel], transforms, `${phrase} · ${isCopy ? 'copy' : 'improvise'}`, targets.length);
+    entry.movement = m.id;
+    return { targets, entry };
+  }
+
   /** One jump from learned airborne movement, placed at the dancer (chance among the best few, avoiding repeats). */
   jump(place, phrase) {
     const { jumps } = this.material();
@@ -858,22 +1491,29 @@ export class Director {
     return { targets, entry };
   }
 
-  /** Walk a floor pattern from the dancer's place: one target per gait cycle along it. */
-  walk(place, step, phrase) {
+  /** Walk (or run) a floor pattern from the dancer's place: one target per gait cycle along it. */
+  walk(place, step, phrase, isRun = false) {
     const { walking } = this.material();
     if (!walking) return null;
-    const { points, rotation, mirrored } = fitOnStage(place, step, walking);
+    const gait = isRun ? { ...walking, speed: walking.speed * 1.75, period: Math.max(0.65, walking.period * 0.72) } : walking;
+    const { points, rotation, mirrored } = step.noFitStage
+      ? { points: waypoints(place, step, gait), rotation: 0, mirrored: false }
+      : fitOnStage(place, step, gait);
     const window = this.window(walking.source, walking.time);
     const a = analysisOf(walking.source, this.skeleton);
     const fr = a.frames[Math.round(walking.time * SAMPLE_RATE)];
     const from = { x: fr.root[0], z: fr.root[2], heading: walking.heading };
-    const targets = points.map((p) => ({ poses: this.place(window, from, p.x, p.z, p.heading), numPoses: POSES_PER_TOKEN, tokens: tokensFor(p.seconds), early: 0, movement: 'walk' }));
+    const kind = isRun ? 'run' : 'walk';
+    const targets = points.map((p) => ({ poses: this.place(window, from, p.x, p.z, p.heading), numPoses: POSES_PER_TOKEN, tokens: tokensFor(p.seconds), early: 0, movement: kind }));
     step.done = true;
     this.planned += points.reduce((t, p) => t + p.seconds, 0);
     const transforms = [`${points.length} targets along the path`];
     if (rotation) transforms.push(`turned ${rotation}° to stay on stage`);
     if (mirrored) transforms.push('curving the other way to stay on stage');
-    const entry = this.entry(`Walking ${describeStep(step).replace(/^walk: /, '')}`, walking.source, ['as asked'], transforms, phrase, targets.length);
+    const title = step.destLabel
+      ? `${isRun ? 'Running' : 'Walking'} to ${step.destLabel}`
+      : `${isRun ? 'Running' : 'Walking'} ${describeStep(step).replace(/^(?:walk|run): /, '')}`;
+    const entry = this.entry(title, walking.source, ['as asked'], transforms, phrase, targets.length);
     return { targets, entry };
   }
 }

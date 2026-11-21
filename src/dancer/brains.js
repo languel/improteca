@@ -60,9 +60,14 @@ const MOVE_SCHEMA = {
 const STEP_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['action', 'text', 'plan', 'seconds', 'moves', 'repeat'],
+  required: ['action', 'target', 'text', 'plan', 'seconds', 'moves', 'repeat'],
   properties: {
-    action: { type: 'string', enum: ACTIONS, description: 'stand (hold a natural standing pose), walk (a floor pattern made of moves), jump, dance (improvise with the qualities above).' },
+    action: {
+      type: 'string',
+      enum: ACTIONS,
+      description: 'stand, walk, run, go_to (navigate to a stage target), sit (on chair), stand_up, pick_up (glass or floor), drink (from glass), put_down, wave, reach, crouch, spin, jump, dance, or imitate (copy partner/webcam moves and improvise).',
+    },
+    target: nullable('string', 'For go_to, walk, run, sit, pick_up, drink, put_down: target object or stage spot (table, chair, glass, floor, center, left, right, front, back), or null.'),
     text: nullable('string', 'What the body does in this step, for a text-to-motion model: one or two plain sentences starting "A person", about the movement itself (no metaphor, no music), e.g. "A person sways slowly from side to side, arms drifting low." Null to let the dancer choose.'),
     plan: nullable('string', 'For walk, before the moves: work out the geometry in a few words (sides, lengths, the angle at each corner or of each curve). Null otherwise.'),
     seconds: nullable('number', 'How long, for stand, jump and dance; null for the default (or until the next prompt, when it is the last step).'),
@@ -101,7 +106,8 @@ and chooses among them by these qualities. Read imagery and metaphor as movement
 (e.g. "like seaweed" = continuous, low energy, arms leading; "a storm" = vigorous, travelling, turning).
 Set a quality only when the prompt implies it; otherwise null. Keep tempo between 0.6 and 1.4.
 When the prompt asks for specific actions or a sequence ("stand still", "walk somewhere", "stand, then walk,
-then jump"), list them in order in steps; the qualities then describe any dance steps. When the prompt only
+then jump", "go to the table, sit, pick up the glass and drink", "copy my moves and improvise based on them"),
+list them in order in steps (using actions such as go_to with target "table" or "chair", sit, stand_up, pick_up with target "glass" or "floor", drink, put_down, walk, run, spin, jump, wave, reach, crouch, imitate, stand, dance); the qualities then describe any dance steps. When the prompt only
 describes how to dance, steps is empty.
 For each step, also write text: the movement in plain physical words starting "A person" (it drives a motion model
 that knows everyday and dance movement but not imagery): translate imagery into what the body does.
