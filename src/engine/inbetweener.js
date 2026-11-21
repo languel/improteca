@@ -4,7 +4,29 @@
 // context. Each transition builds on the motion that was actually played.
 
 import { TF, getTf, tmul, tf, tblend } from './math.js';
-import { POSES_PER_TOKEN, SAMPLE_RATE, DEFAULT_TOKEN_COUNTS } from './soma.js';
+import { POSES_PER_TOKEN, SAMPLE_RATE, DEFAULT_TOKEN_COUNTS, FOOT_CONTACT_JOINTS } from './soma.js';
+
+const CONTACT_MAX_Y = [0.105, 0.052, 0.105, 0.052]; // LeftFoot, LeftToeBase, RightFoot, RightToeBase
+
+/** Estimate 4-channel foot contacts from world height and horizontal speed when a clip has no contact labels. */
+export function estimateContacts(skeleton, poses, frameCount) {
+  const J = skeleton.numJoints;
+  const joints = FOOT_CONTACT_JOINTS.map((n) => skeleton.jointIndex(n));
+  const contacts = new Float32Array(frameCount * 4);
+  const w = new Float64Array(J * TF);
+  let prevW = null;
+  for (let f = 0; f < frameCount; f++) {
+    skeleton.world(poses.subarray(f * J * TF, (f + 1) * J * TF), w);
+    for (let c = 0; c < 4; c++) {
+      const o = joints[c] * TF;
+      const y = w[o + 1];
+      const speed = prevW ? Math.hypot(w[o] - prevW[o], w[o + 2] - prevW[o + 2]) * SAMPLE_RATE : 0;
+      contacts[f * 4 + c] = y <= CONTACT_MAX_Y[c] && speed < 0.30 ? 1 : 0;
+    }
+    prevW = Float64Array.from(w);
+  }
+  return contacts;
+}
 
 /**
  * Sample four poses at 30 Hz from a clip, placed in the world
@@ -62,12 +84,26 @@ export class Inbetweener {
     this.time = 0;
   }
 
-  /** Generate from the current context toward a target. */
+  /** Generate from the current context toward a target (or stream a 30 Hz direct clip segment with endpoint alignment). */
   async generate(target) {
     const t = this.engine.token(target.poses, target.numPoses ?? POSES_PER_TOKEN);
-    const out = await this.engine.generate(this.context, t, {
-      allowedTokenCounts: target.tokens ?? DEFAULT_TOKEN_COUNTS,
-    });
+    let out;
+    if (target.directPoses && target.directPoses.length >= POSES_PER_TOKEN * this.J * TF) {
+      const poses = Float64Array.from(target.directPoses);
+      const frameCount = poses.length / (this.J * TF);
+      out = { poses, contacts: null, frameCount, tokens: Math.min(16, Math.max(6, Math.round(frameCount / POSES_PER_TOKEN))), inferenceMs: 0, sampleRate: SAMPLE_RATE };
+      if (this.context && target.correct !== false) this.engine.correctEndpoints(out, this.context, t);
+      out.contacts = target.directContacts && target.directContacts.length === frameCount * 4
+        ? Float32Array.from(target.directContacts)
+        : estimateContacts(this.engine.skeleton, out.poses, frameCount);
+    } else {
+      out = await this.engine.generate(this.context, t, {
+        allowedTokenCounts: target.tokens ?? DEFAULT_TOKEN_COUNTS,
+      });
+    }
+    if (typeof target.modifier === 'function') {
+      target.modifier(out.poses, out.contacts, out.frameCount, this.engine.skeleton);
+    }
     this.segment = out;
     this.time = 0;
     // At least four frames play, because the next context is the last four played frames.

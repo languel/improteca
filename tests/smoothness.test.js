@@ -18,9 +18,11 @@ import { Constraints } from '../src/engine/constraints.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const FIXTURE = `${root}local/fixtures/reference.json`;
+const SKELETON = `${root}assets/soma/skeleton.json`;
 const MODEL = `${root}local/models/mmm_v6_soma_fp16.onnx`;
 const CLIPS = `${root}local/clips/`;
-const skip = existsSync(FIXTURE) && existsSync(MODEL) ? false : 'local model or fixtures missing';
+const skip = existsSync(MODEL) ? false : 'local model missing';
+const skipNvidia = existsSync(FIXTURE) && existsSync(MODEL) ? false : 'local model or fixtures missing';
 
 /** Rotation-velocity vector (axis * angle, rad per frame) from pose b to pose a. */
 function velocity(a, ao, b, bo) {
@@ -40,7 +42,12 @@ function angle(a, ao, b, bo) {
 }
 
 async function chainCheck(label, loadClips, limit, constraints = false) {
-  const fx = JSON.parse(readFileSync(FIXTURE, 'utf8'));
+  const fx = existsSync(FIXTURE)
+    ? JSON.parse(readFileSync(FIXTURE, 'utf8'))
+    : (() => {
+        const sk = JSON.parse(readFileSync(SKELETON, 'utf8'));
+        return { skeleton: sk, model_joint_names: sk.model_joint_names, clips: {} };
+      })();
   const skeleton = Skeleton.fromJSON(fx.skeleton);
   const J = skeleton.numJoints;
   const ort = await import('onnxruntime-node');
@@ -111,7 +118,7 @@ async function chainCheck(label, loadClips, limit, constraints = false) {
   assert.ok(fastest < 20, `${label}: a joint spins at ${fastest.toFixed(1)} rad/s`);
 }
 
-test('a long chain of NVIDIA clips plays without pops at handovers', { skip, timeout: 600_000 }, () =>
+test('a long chain of NVIDIA clips plays without pops at handovers', { skip: skipNvidia, timeout: 600_000 }, () =>
   chainCheck('NVIDIA clips', (fx, skeleton) => Object.fromEntries(Object.entries(fx.clips).map(([k, f]) =>
     [k, parseBVH(readFileSync(CLIPS + f, 'utf8'), { skeleton })])), 2));
 

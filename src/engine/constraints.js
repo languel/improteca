@@ -21,7 +21,7 @@
 // The corrected frames are what plays and what the next generation starts
 // from, so the model continues from the corrected body.
 
-import { TF, getTf, setTf, tf, tp, tq, qmul, qinv, qnormalize, qToAxisAngle, qFromAxisAngle } from './math.js';
+import { TF, getTf, setTf, tf, tp, tq, qmul, qinv, qrot, qnormalize, qToAxisAngle, qFromAxisAngle } from './math.js';
 import { LIMBS, limbInfo, solveLimb, ikDirections, hingeAngle, HINGE_RANGE } from './limbs.js';
 
 const DEG = Math.PI / 180;
@@ -173,8 +173,16 @@ export class Constraints {
     this.cache = {};
     applyJointLimits(skeleton, Float64Array.from(skeleton.reference), 1, this.cache);
     this.legs = [
-      { info: this.cache.limbs[2], slot: 2, heel: 0, toe: 1, toeJ: idx('LeftToeBase'), lock: null, w: 0, side: null },
-      { info: this.cache.limbs[3], slot: 3, heel: 2, toe: 3, toeJ: idx('RightToeBase'), lock: null, w: 0, side: null },
+      {
+        info: this.cache.limbs[2], slot: 2, heel: 0, toe: 1, toeJ: idx('LeftToeBase'),
+        toeOffset: tp(getTf(skeleton.reference, idx('LeftToeBase'))),
+        lock: null, w: 0, side: null, prevAnkle: null, prevToe: null, prevFootQ: null,
+      },
+      {
+        info: this.cache.limbs[3], slot: 3, heel: 2, toe: 3, toeJ: idx('RightToeBase'),
+        toeOffset: tp(getTf(skeleton.reference, idx('RightToeBase'))),
+        lock: null, w: 0, side: null, prevAnkle: null, prevToe: null, prevFootQ: null,
+      },
     ];
     this.cache.normals = this.cache.limbs.map(() => null);
     this.cache.prev = {};
@@ -206,12 +214,14 @@ export class Constraints {
     let dv = null;
     if (from > 0) {
       for (const leg of this.legs) {
-        leg.offset = [0, 0, 0];
-        leg.vel = [0, 0, 0];
+        // The new segment's frame 0 already starts at the corrected pose, so any
+        // relative release offset from the old segment is already baked in.
+        leg.corr = null;
       }
       this.lift = 0;
       // Handover velocity: what was shown, against how the new segment leaves
-      // the last shown pose (its frame from-1 is that pose).
+      // the last shown pose (its frame from-1 is that pose). World-space foot
+      // anchors stay locked across handovers so a planted foot never slips at a join.
       if (this.shownLast && this.shownBeforeLast && this.settings.smooth > 0 && to >= from) {
         const before = velocity(this.shownBeforeLast, this.shownLast);
         // Compare corrected with corrected: the new frame gets the joint limits
@@ -260,7 +270,7 @@ export class Constraints {
       let need = 0;
       for (const [j, c] of this.floorJoints) need = Math.max(need, c - world[j * TF + 1]);
       // Rise at once when needed, settle back slowly.
-      this.lift = need > this.lift ? need : this.lift + (need - this.lift) * 0.15;
+      this.lift = need > this.lift ? need : this.lift + (need - this.lift) * 0.18;
       if (this.lift > 1e-4) {
         local[1] += this.lift * S.floor;
         this.stats.lifted++;
@@ -270,7 +280,7 @@ export class Constraints {
     }
 
     // Balance: shift the hips so the centre of mass is over the support.
-    const support = contact ? this.legs.filter((leg) => Math.max(contact[leg.heel], contact[leg.toe]) > 0.5) : [];
+    const support = contact ? this.legs.filter((leg) => Math.max(contact[leg.heel], contact[leg.toe]) >= 0.5) : [];
     if (S.balance > 0 && support.length) {
       let com = [0, 0];
       let total = 0;
@@ -293,21 +303,20 @@ export class Constraints {
       }
     }
 
-    // Feet: plant the part in contact (heel: the ankle; toe only: the toe, the
-    // foot pivoting on it). The contact signal is smoothed and needs to hold
-    // for a few frames; a planted foot keeps its anchor through a heel-toe
-    // roll; the correction follows a critically damped spring (no sudden
-    // accelerations); a foot lets go when the body has moved too far from it.
+    // Feet: world-space pinning for heel/ankle and toe during ground contact.
+    // Anchors initialize from the previous frame's solved pose so contact onset
+    // has zero discontinuity and zero slip; pelvis reach projection ensures the
+    // hips stay within leg reach of planted feet.
     if (S.feet > 0) {
+      const P = (j) => [world[j * TF], world[j * TF + 1], world[j * TF + 2]];
+      const Q = (j) => [world[j * TF + 3], world[j * TF + 4], world[j * TF + 5], world[j * TF + 6]];
+      const activeTargets = [];
+
       for (const leg of this.legs) {
-        const P = (j) => [world[j * TF], world[j * TF + 1], world[j * TF + 2]];
         const ankle = P(leg.info.e);
         const toePos = P(leg.toeJ);
-        const speed = leg.lastAnkle ? Math.hypot(ankle[0] - leg.lastAnkle[0], ankle[2] - leg.lastAnkle[2]) * 30 : 0;
-        leg.lastAnkle = ankle;
-        // Where the knee points, tracked every frame (smoothed, kept on the
-        // same side; a nearly straight knee's direction is noise and would
-        // flip the bend plane (and twist the thigh).
+        const footQ = Q(leg.info.e);
+        // Track the knee bend plane normal smoothly.
         const hipNow = P(leg.info.u);
         const kneeNow = P(leg.info.m);
         const bend = [0, 1, 2].map((i) => kneeNow[i] - (hipNow[i] + ankle[i]) / 2);
@@ -320,50 +329,115 @@ export class Constraints {
           const ml = Math.hypot(...mix);
           if (ml > 1e-6) leg.side = mix.map((x) => x / ml);
         }
-        let desired = [0, 0, 0];
-        if (contact) {
-          const raw = Math.max(contact[leg.heel], contact[leg.toe]);
-          leg.p = leg.p === undefined ? raw : leg.p + (raw - leg.p) * 0.35; // smoothed contact
-          leg.held = (leg.held || 0) + 1;
-          if (leg.lock && leg.p < 0.3 && leg.held >= 6) {
-            leg.lock = null;
-            leg.held = 0;
-          } else if (!leg.lock && leg.p > 0.7 && speed < 0.6 && leg.held >= 3) {
-            const mode = contact[leg.heel] >= contact[leg.toe] ? 'heel' : 'toe';
-            const at = mode === 'heel' ? ankle : toePos;
-            leg.lock = { mode, at: at.map((x, k) => x + (leg.offset?.[k] || 0)) };
-            leg.held = 0;
+
+        const heelDown = Boolean(contact && contact[leg.heel] >= 0.5);
+        const toeDown = Boolean(contact && contact[leg.toe] >= 0.5);
+        // Gentle angular stabilization (within 3.5 deg of current footQ) prevents toe jitter
+        // during flat contact while allowing the foot to pivot naturally with the shin in turns/pirouettes.
+        const stabilizeFootQ = (curQ, refQ, strength) => {
+          if (!refQ || strength <= 0) return curQ;
+          const dot = Math.abs(curQ[0] * refQ[0] + curQ[1] * refQ[1] + curQ[2] * refQ[2] + curQ[3] * refQ[3]);
+          const ang = 2 * Math.acos(Math.min(1, dot));
+          if (ang < 1e-5) return curQ;
+          const maxHold = 0.06 * strength; // max 3.5 degrees from the shin-aligned foot orientation
+          return slerp(curQ, refQ, Math.min(1, maxHold / ang));
+        };
+
+        if (heelDown || toeDown) {
+          const refAnkle = leg.prevAnkle || ankle;
+          const refToe = leg.prevToe || toePos;
+          const refFootQ = leg.prevFootQ || footQ;
+          if (heelDown && !leg.heelLocked) {
+            leg.anchorAnkle = [refAnkle[0], Math.max(0.05, refAnkle[1]), refAnkle[2]];
+            leg.heelLocked = true;
           }
-          if (leg.lock) {
-            const want = leg.lock.mode === 'heel' ? leg.lock.at : leg.lock.at.map((x, k) => x - (toePos[k] - ankle[k]));
-            desired = want.map((x, k) => x - ankle[k]);
-            if (Math.hypot(...desired) > 0.15) {
-              leg.lock = null; // the body has moved on: let the foot go
-              leg.held = 0;
-              desired = [0, 0, 0];
+          if (toeDown && !leg.toeLocked) {
+            leg.anchorToe = [refToe[0], Math.max(0.015, refToe[1]), refToe[2]];
+            leg.toeLocked = true;
+          }
+          if (!heelDown) leg.heelLocked = false;
+          if (!toeDown) leg.toeLocked = false;
+
+          const wantFootQ = stabilizeFootQ(footQ, refFootQ, S.feet);
+          let wantAnkle = ankle;
+          if (leg.heelLocked) {
+            wantAnkle = leg.anchorAnkle;
+            if (leg.toeLocked) {
+              const toeVec = qrot(wantFootQ, leg.toeOffset);
+              leg.anchorToe = [wantAnkle[0] + toeVec[0], wantAnkle[1] + toeVec[1], wantAnkle[2] + toeVec[2]];
+            }
+          } else if (leg.toeLocked) {
+            const toeVec = qrot(wantFootQ, leg.toeOffset);
+            wantAnkle = [leg.anchorToe[0] - toeVec[0], Math.max(0.05, leg.anchorToe[1] - toeVec[1]), leg.anchorToe[2] - toeVec[2]];
+          }
+
+          // If the hip has moved past the leg's anatomical reach, clamp wantAnkle onto the
+          // reachable sphere around the hip so solveLimb reaches it without yanking the pelvis.
+          const maxReach = (leg.info.lenU + leg.info.lenM) * 0.998;
+          const toAnkle = [wantAnkle[0] - hipNow[0], wantAnkle[1] - hipNow[1], wantAnkle[2] - hipNow[2]];
+          const dHip = Math.hypot(...toAnkle);
+          if (dHip > maxReach && dHip > 1e-6) {
+            const scale = maxReach / dHip;
+            wantAnkle = [hipNow[0] + toAnkle[0] * scale, Math.max(0.05, hipNow[1] + toAnkle[1] * scale), hipNow[2] + toAnkle[2] * scale];
+            if (leg.anchorAnkle) leg.anchorAnkle = [...wantAnkle];
+            if (leg.anchorToe) {
+              const toeVec = qrot(wantFootQ, leg.toeOffset);
+              leg.anchorToe = [wantAnkle[0] + toeVec[0], wantAnkle[1] + toeVec[1], wantAnkle[2] + toeVec[2]];
             }
           }
+
+          leg.lock = { mode: leg.heelLocked ? 'heel' : 'toe', at: wantAnkle, footQ: wantFootQ };
+          const targetAnkle = [
+            ankle[0] + (wantAnkle[0] - ankle[0]) * S.feet,
+            ankle[1] + (wantAnkle[1] - ankle[1]) * S.feet,
+            ankle[2] + (wantAnkle[2] - ankle[2]) * S.feet,
+          ];
+          leg.corr = [targetAnkle[0] - ankle[0], targetAnkle[1] - ankle[1], targetAnkle[2] - ankle[2]];
+          activeTargets.push({ leg, targetAnkle, targetFootQ: wantFootQ });
+        } else {
+          leg.heelLocked = false;
+          leg.toeLocked = false;
+          leg.lock = null;
         }
-        desired = desired.map((x) => x * S.feet);
-        // Critically damped spring toward the desired correction.
-        leg.offset ??= [0, 0, 0];
-        leg.vel ??= [0, 0, 0];
-        const k = 0.12;
-        const c = 2 * Math.sqrt(k);
-        for (let i = 0; i < 3; i++) {
-          leg.vel[i] += k * (desired[i] - leg.offset[i]) - c * leg.vel[i];
-          leg.offset[i] += leg.vel[i];
+
+        if (!leg.lock && leg.corr && leg.prevAnkle) {
+          // Smoothly decay the correction offset after liftoff with bounded per-frame change.
+          const len = Math.hypot(...leg.corr);
+          if (len < 1e-3) {
+            leg.corr = null;
+          } else {
+            const drop = Math.min(len, Math.max(0.0025, Math.min(0.009, len * 0.22)));
+            const scale = (len - drop) / len;
+            leg.corr = leg.corr.map((c) => c * scale);
+            const targetAnkle = [ankle[0] + leg.corr[0], ankle[1] + leg.corr[1], ankle[2] + leg.corr[2]];
+            activeTargets.push({ leg, targetAnkle, targetFootQ: footQ });
+          }
         }
-        if (Math.hypot(...leg.offset) < 1e-4) continue;
-        const target = ankle.map((x, i) => x + leg.offset[i]);
-        const hip = P(leg.info.u);
-        const knee = P(leg.info.m);
-        const { dU, dM } = ikDirections(leg.info, hip, target, leg.side);
-        const r = solveLimb(sk, leg.info, local, world, dU, dM, { prevNormal: this.cache.normals[leg.slot] });
-        this.cache.normals[leg.slot] = r.normal;
-        this.stats.locked++;
       }
-      this.legs.forEach((leg, i) => (act.planted[i] = !!leg.lock));
+
+      if (activeTargets.length) {
+        for (const { leg, targetAnkle, targetFootQ } of activeTargets) {
+          const hip = P(leg.info.u);
+          const { dU, dM } = ikDirections(leg.info, hip, targetAnkle, leg.side);
+          const e = leg.info.e;
+          setTf(world, e, tf(P(e), targetFootQ));
+          const r = solveLimb(sk, leg.info, local, world, dU, dM, { prevNormal: this.cache.normals[leg.slot] });
+          this.cache.normals[leg.slot] = r.normal;
+          this.stats.locked++;
+        }
+        world = sk.world(local);
+      }
+
+      for (const [i, leg] of this.legs.entries()) {
+        const curAnkle = P(leg.info.e);
+        leg.prevVel = leg.prevAnkle
+          ? [(curAnkle[0] - leg.prevAnkle[0]) * 30, (curAnkle[1] - leg.prevAnkle[1]) * 30, (curAnkle[2] - leg.prevAnkle[2]) * 30]
+          : [0, 0, 0];
+        leg.prevAnkle = curAnkle;
+        leg.prevToe = P(leg.toeJ);
+        leg.prevFootQ = Q(leg.info.e);
+        act.planted[i] = Boolean(leg.lock);
+      }
     }
     return act;
   }

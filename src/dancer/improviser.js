@@ -104,6 +104,19 @@ export class Improviser {
     this.mirror = makeMirror(skeleton);
     this.step = 0;
     this.composer = new Composer();
+    this.qualityBias = {}; // movementId -> score adjustment from VLM / biomechanical critic
+  }
+
+  /** Apply feedback from the VLM / biomechanical critic to steer future choices. */
+  applyFeedback({ movementId, delta = 0, intentions = null } = {}) {
+    if (movementId && Number.isFinite(delta)) {
+      this.qualityBias[movementId] = Math.max(-3, Math.min(3, (this.qualityBias[movementId] || 0) + delta));
+    }
+    if (intentions) {
+      for (const [k, v] of Object.entries(intentions)) {
+        if (v !== null && v !== undefined && k in NEUTRAL) this.intentions[k] = v;
+      }
+    }
   }
 
   /** Phrase memory: motifs and the form so far (for display). */
@@ -171,6 +184,10 @@ export class Improviser {
     score -= sameSource * (0.4 + 1.6 * I.variety);
     if (variant.mirrored) score += Math.log(Math.max(1e-3, I.mirror) / 0.35);
     if (variant.retro) score += Math.log(Math.max(1e-3, I.retrograde) / 0.35);
+    if (this.qualityBias[m.id]) {
+      score += this.qualityBias[m.id];
+      if (this.qualityBias[m.id] > 0.2) reasons.push('critic-endorsed');
+    }
     return { score, reasons };
   }
 
@@ -337,7 +354,7 @@ export class Improviser {
     const T = tmul(tf([place.x, 0, place.z], qFromAxisAngle([0, 1, 0], yaw)), toOrigin);
     const placed = windows.map((w) => placePoses(w, J, T));
 
-    // Tempo: token counts from the time between keys.
+    // Tempo: token counts from the time between keys, plus 30 Hz direct clip spans for interior segments.
     const tempo = (I.tempo || 1) * tempoScale;
     if (Math.abs(tempo - 1) > 0.05) transforms.push(tempo > 1 ? `faster ×${tempo.toFixed(2)}` : `slower ×${(1 / tempo).toFixed(2)}`);
     const tokensFor = (gap) => {
@@ -346,9 +363,22 @@ export class Improviser {
       const c = Math.min(MAX_TOKENS, Math.max(MIN_TOKENS, t));
       return [Math.max(MIN_TOKENS, c - 1), Math.min(MAX_TOKENS, c + 1)];
     };
+    const sampleSpan = (t0, t1) => {
+      const dur = Math.abs(t1 - t0) / tempo;
+      const count = Math.max(POSES_PER_TOKEN, Math.round(dur * SAMPLE_RATE) + 1);
+      const span = new Float64Array(count * J * TF);
+      for (let f = 0; f < count; f++) {
+        const u = count > 1 ? f / (count - 1) : 0;
+        const t = t0 + (t1 - t0) * u;
+        const p = m.source.clip.sample(Math.min(m.source.clip.duration, Math.max(0, t)));
+        span.set(v.mirrored ? this.mirror(p) : p, f * J * TF);
+      }
+      return placePoses(span, J, T);
+    };
     const targets = placed.map((poses, i) => {
-      const range = i === 0 ? (tempo > 1.2 ? [6, 10] : tempo < 0.8 ? [10, 16] : [8, 14]) : tokensFor(Math.abs(keys[i] - keys[i - 1]));
-      return { poses, numPoses: 4, tokens: rangeOf(range[0], range[1]), early: 0, movement: m.id };
+      const range = i === 0 ? (tempo > 1.2 ? [6, 8] : tempo < 0.8 ? [8, 12] : [6, 10]) : tokensFor(Math.abs(keys[i] - keys[i - 1]));
+      const directPoses = i > 0 ? sampleSpan(keys[i - 1], keys[i]) : null;
+      return { poses, ...(directPoses ? { directPoses } : {}), numPoses: 4, tokens: rangeOf(range[0], range[1]), early: 0, movement: m.id };
     });
     return { targets, transforms };
   }
