@@ -136,6 +136,27 @@ test('go to the table, sit, pick up the glass and drink executes with seated lay
   assert.ok(minHandToGlass < 0.03, `hand reached the glass on the table within ${minHandToGlass.toFixed(4)} m`);
   assert.ok(minHandToMouth < 0.04, `hand brought the glass to the mouth within ${minHandToMouth.toFixed(4)} m`);
 
+  // Verify that subsequent seated holds at the table have no head jerking across frames or segment handovers.
+  const seatedHold = director.next(lastPose);
+  const headEndIdx = soma.jointIndex('HeadEnd') * TF;
+  let prevHeadEnd = null;
+  let maxSeatedHeadSpeed = 0;
+  for (const t of seatedHold.targets) {
+    const out = await player.generate(t);
+    for (let f = 1; f <= player.endFrame; f++) {
+      const pose = out.poses.slice(f * J * TF, (f + 1) * J * TF);
+      const w = soma.world(pose);
+      const cur = [w[headEndIdx], w[headEndIdx + 1], w[headEndIdx + 2]];
+      if (prevHeadEnd) {
+        const speed = Math.hypot(cur[0] - prevHeadEnd[0], cur[1] - prevHeadEnd[1], cur[2] - prevHeadEnd[2]) * 30;
+        maxSeatedHeadSpeed = Math.max(maxSeatedHeadSpeed, speed);
+      }
+      prevHeadEnd = cur;
+    }
+    player.commit();
+  }
+  assert.ok(maxSeatedHeadSpeed < 0.03, `head stays calm while seated at the table (max speed ${maxSeatedHeadSpeed.toFixed(4)} m/s)`);
+
   // Audit the direct 30 Hz interaction frames for physiological & physical accuracy.
   const report = audit(soma, allFrames, allContacts).summary;
   assert.equal(report.offAxisFrames, 0, 'elbows and knees stay pure hinges');

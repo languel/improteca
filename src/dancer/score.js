@@ -29,7 +29,7 @@
 //
 // A prompt with no directed step is pure improvisation, as before.
 
-import { TF, tf, tmul, qFromAxisAngle } from '../engine/math.js';
+import { TF, tf, tmul, getTf, setTf, tblend, qFromAxisAngle } from '../engine/math.js';
 import { SAMPLE_RATE, POSES_PER_TOKEN, MIN_TOKENS, MAX_TOKENS } from '../engine/soma.js';
 import { placePoses } from './transforms.js';
 import { analyse } from './repertoire.js';
@@ -936,16 +936,14 @@ export class Director {
   }
 
   /** A single calm local pose placed at `place`, using learned standing material or the current/reference pose. */
-  basePose(place, pose = null, timeOffset = 0) {
+  basePose(place, pose = null) {
     const { standing } = this.material();
-    const J = this.J;
     if (standing) {
       const source = standing.source;
       const a = analysisOf(source, this.skeleton);
       const fr = a.frames[Math.round(standing.rest * SAMPLE_RATE)];
       const from = { x: fr.root[0], z: fr.root[2], heading: fr.heading };
-      const t = Math.min(source.clip.duration, Math.max(0, standing.rest + timeOffset));
-      const one = source.clip.sample(t);
+      const one = source.clip.sample(standing.rest);
       return this.place(one, from, place.x, place.z, place.heading);
     }
     if (pose) return Float64Array.from(pose);
@@ -961,6 +959,7 @@ export class Director {
     const directPoses = new Float64Array(frameCount * J * TF);
     const directContacts = new Float32Array(frameCount * 4);
     const propFrames = [];
+    const blendFrames = Math.min(10, Math.floor(frameCount / 3));
     const runBuild = (posesArr, contactsArr, preserveFirst = false) => {
       const cache = {};
       propFrames.length = 0;
@@ -970,7 +969,13 @@ export class Director {
         const c = contactsArr.subarray(f * 4, f * 4 + 4);
         c.set([1, 1, 1, 1]);
         buildFrame(local, f, frameCount, c, cache);
-        if (preserveFirst && f === 0) local.set(firstPose);
+        if (preserveFirst && firstPose && f < blendFrames) {
+          const u = f / blendFrames;
+          const alpha = u * u * (3 - 2 * u);
+          for (let j = 0; j < J; j++) {
+            setTf(local, j, tblend(getTf(firstPose, j), getTf(local, j), alpha));
+          }
+        }
         this.env.updatePropsFromPose(this.skeleton, local);
         propFrames.push({
           heldBy: this.env.glass.heldBy,
@@ -1009,11 +1014,16 @@ export class Director {
       const chair = this.env.chair;
       const anchor = chair.seatAnchor;
       const holdPos = [1.25, 0.86, -1.14];
-      const targets = Array.from({ length: count }, () => this.makeDirectTarget(Math.round(HOLD * SAMPLE_RATE), 'stand', (local, f) => {
-        local.set(this.basePose(anchor, pose, (f % 30) / SAMPLE_RATE));
-        applySeatedLayer(this.skeleton, local, chair, 1);
-        if (this.env.holding === 'glass') {
-          applyArmReachIK(this.skeleton, local, holdPos, 0.85, { hand: 'right', spineLean: 0.04 });
+      const holdingGlass = this.env.holding === 'glass';
+      const rightLap = [chair.seatAnchor.x - 0.16, chair.seatAnchor.y + 0.08, chair.seatAnchor.z + 0.25];
+      const targets = Array.from({ length: count }, () => this.makeDirectTarget(Math.round(HOLD * SAMPLE_RATE), 'stand', (local, f, n, _c, cache) => {
+        local.set(this.basePose(anchor, pose));
+        applySeatedLayer(this.skeleton, local, chair, 1, { leftArmRest: true, rightArmRest: !holdingGlass, cache });
+        const breath = 0.04 + 0.004 * Math.sin((f / Math.max(1, n - 1)) * 2 * Math.PI);
+        if (holdingGlass) {
+          applyArmReachIK(this.skeleton, local, holdPos, 1, { hand: 'right', spineLean: breath, headPitch: 0, cache });
+        } else {
+          applyArmReachIK(this.skeleton, local, rightLap, 0.85, { hand: 'right', spineLean: breath, headPitch: 0, cache });
         }
       }));
       this.planned += count * HOLD;
@@ -1121,16 +1131,17 @@ export class Director {
         z: place.z + (approach.z - place.z) * Math.min(1, u * 2),
         heading: place.heading + wrapAngle(chair.heading - place.heading) * Math.min(1, u * 2),
       };
-      local.set(this.basePose(curPlace, pose, f / SAMPLE_RATE));
+      local.set(this.basePose(curPlace, pose));
       this.env.seated = u >= 0.85;
-      applySeatedLayer(this.skeleton, local, chair, u, { leftArmRest: true, cache });
-      // Natural forward torso counterbalance as the hips lower onto the chair seat.
-      const balanceLean = wasSeated ? 0.04 : Math.sin(u * Math.PI) * 0.28;
+      applySeatedLayer(this.skeleton, local, chair, u, { leftArmRest: true, rightArmRest: !holdingGlass, cache });
+      // Natural forward torso counterbalance as the hips lower onto the chair seat, settling to 0.04.
+      const s = u * u * (3 - 2 * u);
+      const balanceLean = wasSeated ? 0.04 : Math.sin(u * Math.PI) * 0.24 + 0.04 * s;
+      const rightLap = [chair.seatAnchor.x - 0.16, chair.seatAnchor.y + 0.08, chair.seatAnchor.z + 0.25];
       if (holdingGlass) {
-        applyArmReachIK(this.skeleton, local, holdPos, 0.85, { hand: 'right', spineLean: balanceLean, cache });
-      } else if (balanceLean > 0.01) {
-        const rightLap = [chair.seatAnchor.x - 0.16, chair.seatAnchor.y + 0.08, chair.seatAnchor.z + 0.25];
-        applyArmReachIK(this.skeleton, local, rightLap, u * 0.85, { hand: 'right', spineLean: balanceLean, cache });
+        applyArmReachIK(this.skeleton, local, holdPos, 1, { hand: 'right', spineLean: balanceLean, headPitch: 0, cache });
+      } else {
+        applyArmReachIK(this.skeleton, local, rightLap, s * 0.85, { hand: 'right', spineLean: balanceLean, headPitch: 0, cache });
       }
     });
     this.env.seated = true;
@@ -1222,8 +1233,8 @@ export class Director {
         this.env.glass.tilt = 0;
         applyArmReachIK(this.skeleton, local, glassPos, w, {
           hand: 'right',
-          spineLean: (isSeated ? 0.24 : 0.18) * w,
-          headPitch: -0.20 * w,
+          spineLean: isSeated ? 0.04 + 0.20 * w : 0.18 * w,
+          headPitch: -0.18 * w,
           cache,
         });
       } else {
@@ -1238,11 +1249,11 @@ export class Director {
           glassPos[1] + (holdPos[1] - glassPos[1]) * s,
           glassPos[2] + (holdPos[2] - glassPos[2]) * s,
         ];
-        const lean = (isSeated ? 0.24 : 0.18) * (1 - s * 0.75);
+        const lean = isSeated ? 0.04 + 0.20 * (1 - s) : 0.18 * (1 - s * 0.75);
         applyArmReachIK(this.skeleton, local, handGoal, 1, {
           hand: 'right',
           spineLean: lean,
-          headPitch: -0.20 * (1 - s),
+          headPitch: -0.18 * (1 - s),
           cache,
         });
       }
@@ -1305,7 +1316,7 @@ export class Director {
       ];
       applyArmReachIK(this.skeleton, local, handGoal, 1, {
         hand: 'right',
-        spineLean: isSeated ? 0.05 * (1 - s) : 0,
+        spineLean: isSeated ? 0.04 * (1 - s) : 0,
         headPitch,
         cache,
       });
@@ -1345,7 +1356,7 @@ export class Director {
           holdPos[1] + (glassPos[1] - holdPos[1]) * s,
           holdPos[2] + (glassPos[2] - holdPos[2]) * s,
         ];
-        applyArmReachIK(this.skeleton, local, handGoal, 1, { hand: 'right', spineLean: 0.22 * s, headPitch: -0.18 * s, cache });
+        applyArmReachIK(this.skeleton, local, handGoal, 1, { hand: 'right', spineLean: 0.04 + 0.18 * s, headPitch: -0.18 * s, cache });
       } else {
         const v = 1 - (u - 0.58) / 0.42;
         const s = v * v * (3 - 2 * v);
@@ -1353,7 +1364,20 @@ export class Director {
         this.env.holding = null;
         [this.env.glass.x, this.env.glass.y, this.env.glass.z] = glassPos;
         this.env.glass.tilt = 0;
-        applyArmReachIK(this.skeleton, local, glassPos, s, { hand: 'right', spineLean: 0.22 * s, headPitch: -0.18 * s, cache });
+        const rightLap = [chair.seatAnchor.x - 0.16, chair.seatAnchor.y + 0.08, chair.seatAnchor.z + 0.25];
+        const goal = isSeated
+          ? [
+              rightLap[0] + (glassPos[0] - rightLap[0]) * s,
+              rightLap[1] + (glassPos[1] - rightLap[1]) * s,
+              rightLap[2] + (glassPos[2] - rightLap[2]) * s,
+            ]
+          : glassPos;
+        applyArmReachIK(this.skeleton, local, goal, isSeated ? 0.85 + 0.15 * s : s, {
+          hand: 'right',
+          spineLean: (isSeated ? 0.04 : 0) + 0.18 * s,
+          headPitch: -0.18 * s,
+          cache,
+        });
       }
     });
     this.env.glass.heldBy = null;

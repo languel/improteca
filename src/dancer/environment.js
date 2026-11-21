@@ -185,11 +185,12 @@ export class StageEnvironment {
  * Solves two-bone leg IK so both feet stay planted flat on the floor while the pelvis rests on
  * the chair seat and knees bend naturally at ~100 degrees.
  */
-export function applySeatedLayer(skeleton, local, chair, w = 1, { leftArmRest = true, cache = {} } = {}) {
+export function applySeatedLayer(skeleton, local, chair, w = 1, { leftArmRest = true, rightArmRest = false, cache = {} } = {}) {
   if (w <= 0) return;
   cache.legL ??= limbInfo(skeleton, LIMBS.legL);
   cache.legR ??= limbInfo(skeleton, LIMBS.legR);
   cache.armL ??= limbInfo(skeleton, LIMBS.armL);
+  cache.armR ??= limbInfo(skeleton, LIMBS.armR);
   const s = w * w * (3 - 2 * w); // smoothstep
 
   // Pelvis position and upright facing toward the table (chair.heading).
@@ -204,13 +205,13 @@ export function applySeatedLayer(skeleton, local, chair, w = 1, { leftArmRest = 
   const curRootQ = tq(getTf(local, 0));
   setTf(local, 0, tf([local[0], local[1], local[2]], slerpQ(curRootQ, seatRootQ, s)));
 
-  // Calm the spine toward upright rest before any upper-body action layer runs.
-  for (const name of ['Spine1', 'Spine2', 'Chest']) {
+  // Calm the spine, neck, and head toward upright rest before any upper-body action layer runs.
+  for (const [name, calm] of [['Spine1', 0.8], ['Spine2', 0.8], ['Chest', 0.8], ['Neck1', 0.96], ['Head', 0.96]]) {
     const j = skeleton.jointIndex(name);
     if (j < 0) continue;
     const ref = getTf(skeleton.reference, j);
     const cur = getTf(local, j);
-    setTf(local, j, tf(tp(cur), slerpQ(tq(cur), tq(ref), s * 0.75)));
+    setTf(local, j, tf(tp(cur), slerpQ(tq(cur), tq(ref), s * calm)));
   }
 
   const world = skeleton.world(local);
@@ -234,7 +235,7 @@ export function applySeatedLayer(skeleton, local, chair, w = 1, { leftArmRest = 
     solveLimb(skeleton, info, local, world, dU, dM);
   }
 
-  // Rest left hand naturally near the left thigh / lap while seated.
+  // Rest left (and optionally right) hand naturally near the thigh / lap while seated.
   if (leftArmRest) {
     const curHandL = P(cache.armL.e);
     const lapL = [seat.x + 0.16, seat.y + 0.08, seat.z + 0.25];
@@ -245,6 +246,17 @@ export function applySeatedLayer(skeleton, local, chair, w = 1, { leftArmRest = 
     ];
     const { dU, dM } = ikDirections(cache.armL, P(cache.armL.u), targetL, [0.5, -1, -0.3]);
     solveLimb(skeleton, cache.armL, local, world, dU, dM);
+  }
+  if (rightArmRest) {
+    const curHandR = P(cache.armR.e);
+    const lapR = [seat.x - 0.16, seat.y + 0.08, seat.z + 0.25];
+    const targetR = [
+      curHandR[0] + (lapR[0] - curHandR[0]) * s * 0.85,
+      curHandR[1] + (lapR[1] - curHandR[1]) * s * 0.85,
+      curHandR[2] + (lapR[2] - curHandR[2]) * s * 0.85,
+    ];
+    const { dU, dM } = ikDirections(cache.armR, P(cache.armR.u), targetR, [-0.5, -1, -0.3]);
+    solveLimb(skeleton, cache.armR, local, world, dU, dM);
   }
 }
 
