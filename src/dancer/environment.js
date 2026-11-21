@@ -40,7 +40,7 @@ export class StageEnvironment {
       y: 0,
       height: 0.72,
       radius: 0.42,
-      standAnchor: { x: 1.35, z: -1.30, heading: 0 },
+      standAnchor: { x: 1.35, z: -1.08, heading: 0 },
     };
     this.chair = {
       id: 'chair',
@@ -51,11 +51,11 @@ export class StageEnvironment {
       seatY: 0.53,
       heading: 0, // facing +Z toward the table
       radius: 0.28,
-      approachAnchor: { x: 1.35, z: -1.30, heading: 0 },
+      approachAnchor: { x: 1.35, z: -1.08, heading: 0 },
       seatAnchor: { x: 1.35, y: 0.53, z: -1.45, heading: 0 },
       feet: {
-        left: [1.46, 0.08, -1.05],
-        right: [1.24, 0.08, -1.05],
+        left: [1.45, 0.08, -1.08],
+        right: [1.25, 0.08, -1.08],
       },
     };
     this.glass = {

@@ -29,15 +29,29 @@ replayed from its seed.
   machine), Ollama or LM Studio on your machine, or Claude, OpenAI,
   OpenRouter, Gemini, GitHub Models or any OpenAI-compatible API with your
   own key.
-- **Score**: a prompt that asks for actions ("stand in a neutral pose, then
-  walk in a circle", "walk in a pentagon, then jump") is read as steps: stand,
-  walk, jump or dance. Walks are floor patterns the brain composes from a small
-  general toolkit (forward, turn, arc, repeat), so any shape or path can be
-  asked for; the brain works out the geometry. The director borrows a body pose
-  from learned movement (a calm standing frame, one phase of a walking gait,
-  the top of a learned jump), places it in space and MotionBricks generates
-  the motion between; clips are never mixed. Prompts about qualities only stay
-  free improvisation.
+- **Score & Action RPG Moves**: a prompt that asks for actions ("stand in a
+  neutral pose, then walk in a circle", "go to the table, sit, pick up the glass
+  and drink", "copy my moves and improvise based on them") is read as steps:
+  `stand`, `walk`, `run`, `go_to`, `sit`, `stand_up`, `pick_up`, `drink`,
+  `put_down`, `wave`, `reach`, `crouch`, `spin`, `jump`, `dance`, or `imitate`.
+  You can also click directly on the 3D floor (Shift+click to run), click the
+  table, chair, or glass on stage, or trigger moves from the **Moves & Stage
+  (Action RPG)** panel and keyboard hotbar (`1`–`0`). Upper/lower body layering
+  and two-bone limb IK keep the lower body seated on the chair while the spine
+  and arms reach for the glass on the table and bring it to the mouth to drink.
+- **Gesture & Partner Direction**: drive the performer live with a webcam (or
+  virtual partner demos) using MediaPipe 3D pose landmarks: point to a spot on
+  the floor to send the actor there, raise both hands to jump, crouch to sit, or
+  have the performer copy your live movements into its repertoire and improvise
+  variations (`mirror`, `retrograde`, `tempo`, `relative`) based on them.
+- **VLM Critic & Closed-Loop Feedback**: an embedded evaluator captures a
+  3-frame visual contact sheet from the 3D stage alongside quantitative
+  biomechanical telemetry (`audit.js`: foot sliding, hinge purity, floor
+  clearance, velocity jerk, and prop reach accuracy), queries a Vision-Language
+  Model (local Ollama VLM such as `gemma4`, or Gemini / Claude / OpenAI vision,
+  paired with an instant built-in Biomechanical Critic), and feeds closed-loop
+  corrections back into the body constraint weights and improviser repertoire
+  scores.
 - **Text to motion** (optional, on this machine): with NVIDIA's
   [Kimodo](https://research.nvidia.com/labs/sil/projects/kimodo/) running
   locally, every step is generated from words on the same SOMA skeleton

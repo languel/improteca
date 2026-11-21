@@ -1115,6 +1115,7 @@ export class Director {
     const holdPos = [1.25, 0.86, -1.14];
     const target = this.makeDirectTarget(frames, 'sit', (local, f, n, c, cache) => {
       const u = wasSeated ? 1 : n > 1 ? f / (n - 1) : 1;
+      if (!wasSeated && u < 0.94) c.set([0, 0, 0, 0]);
       const curPlace = {
         x: place.x + (approach.x - place.x) * Math.min(1, u * 2),
         z: place.z + (approach.z - place.z) * Math.min(1, u * 2),
@@ -1149,6 +1150,7 @@ export class Director {
     const holdingGlass = this.env.holding === 'glass';
     const target = this.makeDirectTarget(frames, 'stand_up', (local, f, n, c, cache) => {
       const u = n > 1 ? 1 - f / (n - 1) : 0; // 1 (seated) -> 0 (standing)
+      if (u > 0.08) c.set([0, 0, 0, 0]);
       local.set(this.basePose(approach, null, f / SAMPLE_RATE));
       this.env.seated = u > 0.2;
       applySeatedLayer(this.skeleton, local, chair, u, { leftArmRest: true, cache });
@@ -1493,7 +1495,7 @@ export class Director {
 
   /** Walk (or run) a floor pattern from the dancer's place: one target per gait cycle along it. */
   walk(place, step, phrase, isRun = false) {
-    const { walking } = this.material();
+    const { walking, standing } = this.material();
     if (!walking) return null;
     const gait = isRun ? { ...walking, speed: walking.speed * 1.75, period: Math.max(0.65, walking.period * 0.72) } : walking;
     const { points, rotation, mirrored } = step.noFitStage
@@ -1503,8 +1505,23 @@ export class Director {
     const a = analysisOf(walking.source, this.skeleton);
     const fr = a.frames[Math.round(walking.time * SAMPLE_RATE)];
     const from = { x: fr.root[0], z: fr.root[2], heading: walking.heading };
+    const standWin = standing ? this.window(standing.source, standing.rest) : null;
+    const standFrom = standing
+      ? (() => {
+          const sa = analysisOf(standing.source, this.skeleton);
+          const sfr = sa.frames[Math.round(standing.rest * SAMPLE_RATE)];
+          return { x: sfr.root[0], z: sfr.root[2], heading: sfr.heading };
+        })()
+      : null;
     const kind = isRun ? 'run' : 'walk';
-    const targets = points.map((p) => ({ poses: this.place(window, from, p.x, p.z, p.heading), numPoses: POSES_PER_TOKEN, tokens: tokensFor(p.seconds), early: 0, movement: kind }));
+    const targets = points.map((p, i) => {
+      const prev = i === 0 ? place : points[i - 1];
+      const isPivot = Math.hypot(p.x - prev.x, p.z - prev.z) < 0.05;
+      const poses = isPivot && standWin
+        ? this.place(standWin, standFrom, p.x, p.z, p.heading)
+        : this.place(window, from, p.x, p.z, p.heading);
+      return { poses, numPoses: POSES_PER_TOKEN, tokens: tokensFor(p.seconds), early: 0, movement: kind };
+    });
     step.done = true;
     this.planned += points.reduce((t, p) => t + p.seconds, 0);
     const transforms = [`${points.length} targets along the path`];
