@@ -92,5 +92,6 @@ test('a local OpenAI-compatible server reads a prompt, with or without structure
 test('cloud brains ask for a key before calling out', async () => {
   await assert.rejects(intentionsFromBrain('x', { provider: 'openai' }), /API key/);
   await assert.rejects(intentionsFromBrain('x', { provider: 'anthropic' }), /API key/);
-  await assert.rejects(intentionsFromBrain('x', { provider: 'lfm3' }), /not loaded/);
+  // A WebGPU brain loads on demand; without WebGPU (Node) that fails clearly.
+  await assert.rejects(intentionsFromBrain('x', { provider: 'lfm3' }), /WebGPU/);
 });

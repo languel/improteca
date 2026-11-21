@@ -221,7 +221,11 @@ async function readPrompt(prompt) {
     const name = brainName();
     setStatus(`Asking ${name} how to read the prompt…`);
     try {
-      const { intentions, summary } = await intentionsFromBrain(prompt, brainSettings());
+      const { intentions, summary } = await intentionsFromBrain(prompt, brainSettings(), {
+        onProgress: ({ state, fraction, message }) => {
+          if (state === 'loading') setStatus(`${message}${fraction > 0 ? ` ${Math.round(fraction * 100)}%` : ''}`);
+        },
+      });
       return { intentions, note: `${name}: ${summary || 'read the prompt'}` };
     } catch (err) {
       console.warn(err);

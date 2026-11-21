@@ -71,11 +71,13 @@ function render() {
   $('brain-local').hidden = p.kind !== 'webgpu';
   $('brain-remote').hidden = p.kind === 'none' || p.kind === 'webgpu';
   $('brain-test').hidden = p.kind === 'none';
+  watch(p);
   if (p.kind === 'webgpu') {
     const b = localBrain(p.id);
-    $('brain-load').textContent = b.ready ? 'Loaded' : 'Load';
-    $('brain-load').disabled = b.ready;
-    $('brain-size').textContent = b.ready ? 'Runs on this machine.' : `Downloads ${p.size} once from Hugging Face, then cached.`;
+    $('brain-load').textContent = b.ready ? 'Loaded' : b.busy ? 'Loading…' : 'Load';
+    $('brain-load').disabled = b.ready || b.busy;
+    $('brain-size').textContent = b.ready ? 'Runs on this machine.'
+      : wasLoaded(p.id) ? 'Loads from this browser\'s cache.' : `Downloads ${p.size} once from Hugging Face, then cached. Dance or Try it also loads it.`;
   } else if (p.kind !== 'none') {
     $('brain-url').value = per.baseUrl || p.baseUrl;
     $('brain-model').value = per.model || p.model;
@@ -84,8 +86,41 @@ function render() {
     $('remember-key').checked = Boolean(keys[p.id]);
   }
   if (p.kind === 'none') status('Prompts are read by the built-in movement vocabulary.');
-  else if (p.kind === 'webgpu') status(localBrain(p.id).ready ? '' : 'Not loaded yet.');
-  else status('');
+  else if (p.kind !== 'webgpu') status('');
+}
+
+// The panel follows the loading of the WebGPU brain on show (progress, ready, error).
+let unwatch = () => {};
+function watch(p) {
+  unwatch();
+  unwatch = () => {};
+  if (p.kind !== 'webgpu') return;
+  let last = null;
+  unwatch = localBrain(p.id).subscribe((pr) => {
+    const pct = pr.state === 'loading' && typeof pr.fraction === 'number' && pr.fraction > 0 ? ` ${Math.round(pr.fraction * 100)}%` : '';
+    status(pr.state === 'idle' ? (wasLoaded(p.id) ? 'Not loaded in this page yet.' : 'Not loaded yet.') : `${pr.message}${pct}`);
+    if (pr.state !== last) {
+      last = pr.state;
+      if (pr.state === 'ready') markLoaded(p.id);
+      if (pr.state !== 'loading') queueMicrotask(() => provider(settings.provider).id === p.id && refreshLoadButton(p));
+      else refreshLoadButton(p);
+    }
+  });
+}
+
+function refreshLoadButton(p) {
+  const b = localBrain(p.id);
+  $('brain-load').textContent = b.ready ? 'Loaded' : b.busy ? 'Loading…' : 'Load';
+  $('brain-load').disabled = b.ready || b.busy;
+  if (b.ready) $('brain-size').textContent = 'Runs on this machine.';
+}
+
+// WebGPU brains loaded before on this device load again by themselves (from the cache).
+const LOADED = 'improteca.brain-loaded';
+const wasLoaded = (id) => load(LOADED, []).includes(id);
+function markLoaded(id) {
+  const ids = load(LOADED, []);
+  if (!ids.includes(id)) save(LOADED, [...ids, id]);
 }
 
 function persist() {
@@ -117,21 +152,16 @@ export function setupBrainPanel() {
   $('api-key').addEventListener('input', rememberKey);
   $('remember-key').addEventListener('change', rememberKey);
 
-  $('brain-load').addEventListener('click', async () => {
+  $('brain-load').addEventListener('click', () => {
     const p = provider(settings.provider);
-    $('brain-load').disabled = true;
-    try {
-      await localBrain(p.id).load(({ fraction, message }) => {
-        status(fraction === null || fraction === undefined ? message : `${message} ${Math.round(fraction * 100)}%`);
-      });
-      render();
-      status(`${brainName()} is ready on this machine.`);
-    } catch (err) {
-      console.error(err);
-      $('brain-load').disabled = false;
-      status(`Could not load: ${err.message || err}`);
-    }
+    localBrain(p.id).load().catch((err) => console.error(err));
+    refreshLoadButton(p);
   });
+  // A WebGPU brain chosen and loaded on an earlier visit: load it again now.
+  const chosen = provider(settings.provider);
+  if (chosen.kind === 'webgpu' && wasLoaded(chosen.id) && globalThis.navigator?.gpu) {
+    localBrain(chosen.id).load().catch((err) => console.warn(err));
+  }
 
   $('brain-list').addEventListener('click', async () => {
     const s = brainSettings();
@@ -151,6 +181,7 @@ export function setupBrainPanel() {
     const t0 = performance.now();
     try {
       const { intentions, summary, model } = await intentionsFromBrain(prompt, brainSettings());
+      if (provider(settings.provider).kind === 'webgpu') render();
       const words = describeIntentions(intentions);
       status(`${model} (${((performance.now() - t0) / 1000).toFixed(1)} s): ${summary || '—'} → ${words.join(', ') || 'no preferences'}`);
     } catch (err) {

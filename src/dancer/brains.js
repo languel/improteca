@@ -255,19 +255,41 @@ class LocalBrain {
     this.model = null;
     this.loading = null;
     this.queue = Promise.resolve();
+    this.progress = { state: 'idle', fraction: 0, message: 'Not loaded yet.' };
+    this.listeners = new Set();
   }
 
   get ready() {
     return Boolean(this.model);
   }
 
-  load(onProgress = () => {}) {
+  get busy() {
+    return Boolean(this.loading) && !this.model;
+  }
+
+  /** Follow loading progress: fn({ state, fraction, message }); returns an unsubscribe function. */
+  subscribe(fn) {
+    this.listeners.add(fn);
+    fn(this.progress);
+    return () => this.listeners.delete(fn);
+  }
+
+  emit(progress) {
+    this.progress = progress;
+    for (const fn of this.listeners) fn(progress);
+  }
+
+  /** Load (or join a load in progress). onProgress gets the same updates as subscribers. */
+  load(onProgress = null) {
     if (this.model) return Promise.resolve();
+    const unsubscribe = onProgress ? this.subscribe(onProgress) : () => {};
+    const report = (p) => this.emit(p);
     this.loading ??= (async () => {
       try {
         if (!globalThis.navigator?.gpu) throw new Error('This browser has no WebGPU (try a recent Chrome or Edge, or Safari 26).');
         const p = provider(this.id);
         const rt = RUNTIMES[this.id];
+        const onProgress = ({ fraction, message }) => report({ state: 'loading', fraction, message });
         onProgress({ fraction: 0, message: 'Loading the runtime…' });
         const mod = await import(new URL(`../../vendor/${rt.file}`, import.meta.url).href);
         const cls = mod[rt.name];
@@ -277,16 +299,17 @@ class LocalBrain {
           onProgress: (e) => {
             const fraction = typeof e.progress === 'number' ? (e.progress > 1 ? e.progress / 100 : e.progress)
               : e.kind === 'bytes' && e.total ? e.loaded / e.total : typeof e.fraction === 'number' ? e.fraction : null;
-            onProgress({ fraction, message: `Downloading ${p.label.split(' ·')[0]} (${p.size}, then cached)…` });
+            onProgress({ fraction, message: `Loading ${p.label.split(' ·')[0]} (${p.size} the first time, then from this browser's cache)…` });
           },
         });
-        onProgress({ fraction: 1, message: `${p.label.split(' ·')[0]} is ready on this machine.` });
+        report({ state: 'ready', fraction: 1, message: `${p.label.split(' ·')[0]} is ready on this machine.` });
       } catch (err) {
         this.loading = null;
+        report({ state: 'error', fraction: 0, message: `Could not load: ${err.message || err}` });
         throw err;
       }
     })();
-    return this.loading;
+    return this.loading.finally(unsubscribe);
   }
 
   /** One answer, text only. Calls are queued (one generation at a time on the GPU). */
@@ -318,18 +341,20 @@ export const localBrain = (id) => (local[id] ??= new LocalBrain(id));
 
 /**
  * Read a prompt as intentions with the chosen brain.
- * settings: { provider, baseUrl, model, apiKey }
+ * settings: { provider, baseUrl, model, apiKey }; onProgress: loading updates for a WebGPU brain.
  * @returns {Promise<{ intentions: object, summary: string, model: string }>}
  */
-export async function intentionsFromBrain(prompt, settings) {
+export async function intentionsFromBrain(prompt, settings, { onProgress = null } = {}) {
   const p = provider(settings.provider);
   const model = settings.model?.trim() || p.model;
   let text;
   let used = model;
   if (p.kind === 'none') throw new Error('No brain chosen.');
   if (p.kind === 'webgpu') {
+    // Choosing a WebGPU brain is the choice to load it: load (from this
+    // browser's cache after the first time) or join a load in progress.
     const brain = localBrain(p.id);
-    if (!brain.ready) throw new Error(`${p.label.split(' ·')[0]} is not loaded yet (press Load: ${p.size}).`);
+    if (!brain.ready) await brain.load(onProgress);
     text = await brain.complete(messagesFor(prompt, false));
   } else if (p.kind === 'anthropic') {
     if (!settings.apiKey?.trim()) throw new Error('Claude needs an API key.');
