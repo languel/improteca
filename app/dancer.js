@@ -1,6 +1,8 @@
-// The improvising dancer: a prompt becomes intentions; the improviser picks
-// and transforms learned movements; MotionBricks moves the body between
-// their key poses. Generation runs one segment ahead of playback.
+// The improvising dancer: a prompt becomes a score (directed steps such as
+// stand or walk a circle, if it asks for any) and intentions; the director
+// turns steps into placed target poses, and the improviser picks and
+// transforms learned movements for the dancing; MotionBricks moves the body
+// between the targets. Generation runs one segment ahead of playback.
 //
 // URL options: ?model=<onnx url> &backend=wasm &prompt=<text> &seed=<n> &autoplay &clips=<id,id>
 
@@ -18,6 +20,7 @@ import { TF } from '../src/engine/math.js';
 import { learn } from '../src/dancer/repertoire.js';
 import { Improviser, rng } from '../src/dancer/improviser.js';
 import { parsePrompt, describeIntentions } from '../src/dancer/intentions.js';
+import { Director, parseScore, describeStep } from '../src/dancer/score.js';
 import { intentionsFromBrain } from '../src/dancer/brains.js';
 import { setupBrainPanel, brainSettings, brainName, brainActive } from './brain-panel.js';
 import { learnFromVideo } from './video.js';
@@ -27,13 +30,14 @@ const $ = (id) => document.getElementById(id);
 const MEDIATHEQUE = 'https://languel.github.io/mediatheque/';
 // Taught by default: dance and everyday movement that needs no props.
 const DEFAULT_CLIPS = [
-  'cmu-everyday-waiting-idle-139-02', 'cmu-dance-arching-arms-49-12', 'cmu-ballet-pirouette-05-02',
+  // Standing and walking first: the director borrows poses from them for directed steps.
+  'cmu-everyday-waiting-idle-139-02', 'cmu-everyday-natural-walk-02-01', 'cmu-dance-arching-arms-49-12', 'cmu-ballet-pirouette-05-02',
   'cmu-dance-balance-tilt-49-22', 'cmu-ballet-arabesque-05-03', 'cmu-dance-side-arabesque-49-09',
   'cmu-ballet-pointe-tendue-05-12', 'cmu-ballet-retire-balance-05-14', 'cmu-dance-floor-curl-49-10',
   'cmu-ballet-glissade-05-09', 'cmu-ballet-rond-de-jambe-05-08', 'cmu-ballet-grand-jete-05-17',
   'cmu-ballet-attitude-cambre-05-18', 'cmu-ballet-jete-attitude-05-07', 'cmu-ballet-en-dehors-05-11',
   'cmu-ballet-coupe-jete-05-16', 'cmu-ballet-jete-coupe-05-05', 'cmu-everyday-reach-tiptoe-13-10',
-  'cmu-everyday-direct-traffic-13-26', 'cmu-everyday-natural-walk-02-01',
+  'cmu-everyday-direct-traffic-13-26',
 ];
 const START_AFTER = 6; // clips learned before the dancer starts
 const EXAMPLES = [
@@ -50,6 +54,7 @@ const state = {
   engine: null,
   backend: '',
   improviser: null,
+  director: null,
   sources: [],
   movements: 0,
   loading: null,
@@ -99,6 +104,7 @@ async function boot() {
   viz.update(state.skeleton.reference);
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => viz.setColor(performerColor()));
   state.improviser = new Improviser({ skeleton: state.skeleton, movements: [], seed: Number($('seed').value) });
+  state.director = new Director({ improviser: state.improviser, skeleton: state.skeleton });
   bindUI();
   // For inspection from the console and automated checks.
   window.improteca = { state, ready: false, pose: (local) => viz.update(local), viz };
@@ -221,25 +227,39 @@ async function readPrompt(prompt) {
     const name = brainName();
     setStatus(`Asking ${name} how to read the prompt…`);
     try {
-      const { intentions, summary } = await intentionsFromBrain(prompt, brainSettings(), {
+      const { intentions, steps, summary } = await intentionsFromBrain(prompt, brainSettings(), {
         onProgress: ({ state, fraction, message }) => {
           if (state === 'loading') setStatus(`${message}${fraction > 0 ? ` ${Math.round(fraction * 100)}%` : ''}`);
         },
       });
-      return { intentions, note: `${name}: ${summary || 'read the prompt'}` };
+      setStatus(`${name} read the prompt.`);
+      // A small model may miss the actions; the built-in vocabulary catches plain ones (stand, walk a circle).
+      const builtIn = parseScore(prompt);
+      const useBuiltIn = !steps.length && builtIn.steps.length;
+      return {
+        intentions,
+        steps: useBuiltIn ? builtIn.steps : steps,
+        note: `${name}: ${summary || 'read the prompt'}${useBuiltIn ? ` Steps read with the built-in vocabulary: ${builtIn.understood.join(', then ')}.` : ''}`,
+      };
     } catch (err) {
       console.warn(err);
       const { intentions, understood } = parsePrompt(prompt);
-      return { intentions, note: `${name} unavailable (${err.message}); read with the built-in vocabulary: ${understood.join('; ') || 'nothing recognised'}.` };
+      const score = parseScore(prompt);
+      return { intentions, steps: score.steps, note: `${name} unavailable (${err.message}); read with the built-in vocabulary: ${[...score.understood, ...understood].join('; ') || 'nothing recognised'}.` };
     }
   }
   const { intentions, understood } = parsePrompt(prompt);
-  return { intentions, note: understood.length ? `Read as: ${understood.join('; ')}.` : 'No movement words recognised: improvising freely.' };
+  const score = parseScore(prompt);
+  if (score.steps.length) return { intentions, steps: score.steps, note: `Read as steps: ${score.understood.join(', then ')}.` };
+  return { intentions, steps: [], note: understood.length ? `Read as: ${understood.join('; ')}.` : 'No movement words recognised: improvising freely.' };
 }
 
-function showIntentions(intentions, note) {
+function showIntentions(intentions, note, steps = []) {
   $('understood').hidden = false;
-  const words = describeIntentions(intentions);
+  // A score shows its steps; the qualities matter only for its dance steps.
+  const words = steps.length
+    ? steps.map((s, i) => `${i + 1}. ${describeStep(s)}${s.action === 'dance' && describeIntentions(s.intentions ?? intentions).length ? `: ${describeIntentions(s.intentions ?? intentions).join(', ')}` : ''}`)
+    : describeIntentions(intentions);
   $('intent-chips').replaceChildren(...(words.length ? words : ['free improvisation']).map((w) => {
     const s = document.createElement('span');
     s.className = 'chip on';
@@ -253,10 +273,10 @@ async function dance() {
   const prompt = $('prompt').value.trim();
   $('dance').disabled = true;
   try {
-    const { intentions, note } = await readPrompt(prompt);
-    showIntentions(intentions, note);
-    state.history.push({ at: new Date().toISOString(), prompt, intentions });
-    state.improviser.setIntentions(intentions);
+    const { intentions, steps, note } = await readPrompt(prompt);
+    showIntentions(intentions, note, steps);
+    state.history.push({ at: new Date().toISOString(), prompt, intentions, steps });
+    state.director.setScore(steps, intentions);
     await loadEverything();
     if (!state.running) start();
     else {
@@ -281,7 +301,7 @@ function start() {
   state.constraints = new Constraints(state.skeleton, bodySettings());
   state.player = new Inbetweener(state.engine, { constraints: state.constraints });
   viz.clear();
-  const { targets, entry } = state.improviser.next(null);
+  const { targets, entry } = state.director.next(null);
   state.player.reset(targets[0].poses);
   state.pending = targets.slice(1).map((t, i) => ({ ...t, entry: i === 0 ? entry : null }));
   state.queue = [];
@@ -300,7 +320,7 @@ async function pump(run) {
       const last = state.player.segment
         ? state.player.segment.poses.subarray(state.player.endFrame * state.skeleton.numJoints * TF, (state.player.endFrame + 1) * state.skeleton.numJoints * TF)
         : null;
-      const { targets, entry } = state.improviser.next(last ? Float64Array.from(last) : null);
+      const { targets, entry } = state.director.next(last ? Float64Array.from(last) : null);
       state.pending = targets.map((t, i) => ({ ...t, entry: i === 0 ? entry : null }));
     }
     const target = state.pending.shift();

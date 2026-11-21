@@ -144,7 +144,17 @@ improviser reads.
 | --- | --- | --- |
 | Prompt | "stay low and slow", "keep returning to the spiral you learned" | A language model (for example Claude) maps the text to intention parameters and repertoire tags. It does not generate motion. |
 | Real-time interaction | a person on a webcam; another virtual dancer | Pose tracking gives the partner's position, speed and shapes. Response modes: mirror, echo with delay, counter (contrast), follow, keep distance. |
-| Score | a written sequence; a notation-inspired timeline | Fixes some choices (this movement, at this time, on this spot) and leaves others to improvisation. |
+| Score | a written sequence; a notation-inspired timeline; "stand, then walk in a circle" in a prompt | Fixes some choices (this movement, at this time, on this spot) and leaves others to improvisation. |
+
+**Directed steps (score v1, `src/dancer/score.js`).** A prompt that asks for
+actions becomes steps (stand, walk a circle or a line, dance), from the brain
+(`steps` in its schema) or the built-in vocabulary. The director turns each
+into MotionBricks targets without mixing clips: standing holds a neutral
+standing stretch of a learned clip (arms down, feet under the body) on one
+spot; walking places one moment of a steady learned gait at every gait cycle
+along the path, facing along it, and MotionBricks generates the steps and the
+turning between. Dance steps go to the improviser. After the last directed
+step the dancer stands until the next prompt.
 
 ### 3.6 Performance log
 

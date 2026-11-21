@@ -11,6 +11,7 @@
 // request shapes follow languel/seloai (src/ai/localApiClient.ts).
 
 import { NEUTRAL } from './improviser.js';
+import { ACTIONS, PATHS, DIRECTIONS, sanitizeSteps } from './score.js';
 
 export const ANTHROPIC_SDK_URL = 'https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.6.0/+esm';
 
@@ -44,13 +45,28 @@ const QUALITIES = {
   jump: 'Grounded (0) to jumping, airborne (1).',
   stillness: 'Continuous flow (0) to pauses and holds (1).',
 };
+const nullable = (type, description, values = null) => ({ type: [type, 'null'], ...(values ? { enum: [...values, null] } : {}), description });
+const STEP_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['action', 'seconds', 'path', 'radius', 'distance', 'direction', 'laps'],
+  properties: {
+    action: { type: 'string', enum: ACTIONS, description: 'stand (hold a natural standing pose), walk (along a path), dance (improvise with the qualities above).' },
+    seconds: nullable('number', 'How long, for stand and dance; null for the default (or until the next prompt, when it is the last step).'),
+    path: nullable('string', 'For walk: circle or line.', PATHS),
+    radius: nullable('number', 'For a circle: radius in metres (about 1 to 2.5).'),
+    distance: nullable('number', 'For a line: distance in metres.'),
+    direction: nullable('string', 'For a circle: turn to the left or right; null to choose.', DIRECTIONS),
+    laps: nullable('number', 'For a circle: how many times around (1 default).'),
+  },
+};
 const quality = (description) => ({ type: ['number', 'null'], description: `${description} 0 to 1, or null for no preference.` });
 
 /** JSON schema for the intentions object (structured outputs: all keys required, no extras). */
 export const INTENTIONS_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: [...Object.keys(QUALITIES), 'focus', 'tags', 'avoid', 'tempo', 'variety', 'mirror', 'retrograde', 'summary'],
+  required: [...Object.keys(QUALITIES), 'focus', 'tags', 'avoid', 'tempo', 'variety', 'mirror', 'retrograde', 'steps', 'summary'],
   properties: {
     ...Object.fromEntries(Object.entries(QUALITIES).map(([k, d]) => [k, quality(d)])),
     focus: { type: ['string', 'null'], enum: [...FOCUS, null], description: 'Body part that should lead, or null.' },
@@ -60,6 +76,11 @@ export const INTENTIONS_SCHEMA = {
     variety: { type: 'number', description: 'Repetitive (0) to unpredictable (1); 0.5 default.' },
     mirror: { type: 'number', description: 'Weight for mirrored (left/right swapped) versions; 0.35 default.' },
     retrograde: { type: 'number', description: 'Weight for movements danced backwards; 0.1 default.' },
+    steps: {
+      type: 'array',
+      items: STEP_SCHEMA,
+      description: 'Directed actions in order, when the prompt asks for them (e.g. "stand, then walk in a circle"). Empty when the prompt only describes how to dance.',
+    },
     summary: { type: 'string', description: 'One short sentence: how you read the prompt as movement.' },
   },
 };
@@ -68,12 +89,16 @@ export const SYSTEM = `You translate a choreographer's prompt into intentions fo
 The dancer knows recorded movements (ballet, contemporary dance and everyday gestures from motion capture)
 and chooses among them by these qualities. Read imagery and metaphor as movement qualities
 (e.g. "like seaweed" = continuous, low energy, arms leading; "a storm" = vigorous, travelling, turning).
-Set a quality only when the prompt implies it; otherwise null. Keep tempo between 0.6 and 1.4.`;
+Set a quality only when the prompt implies it; otherwise null. Keep tempo between 0.6 and 1.4.
+When the prompt asks for specific actions or a sequence ("stand still", "walk in a circle", "stand, then walk,
+then dance"), list them in order in steps; the qualities then describe any dance steps. When the prompt only
+describes how to dance, steps is empty.`;
 
 /** For models without structured outputs: the same schema, spelled out. */
 const JSON_INSTRUCTIONS = `Answer with one JSON object and nothing else (no prose, no code fence), with exactly these keys:
-${Object.entries(INTENTIONS_SCHEMA.properties).map(([k, v]) => `- "${k}": ${v.description}${v.enum ? ` One of: ${v.enum.filter(Boolean).join(', ')}, or null.` : ''}${v.items?.enum ? ` Values from: ${v.items.enum.join(', ')}.` : ''}`).join('\n')}
-Example: {"energy":0.2,"level":0.1,"size":null,"travel":null,"turn":null,"armsUp":null,"jump":0,"stillness":0.6,"focus":"arms","tags":[],"avoid":[],"tempo":0.8,"variety":0.5,"mirror":0.35,"retrograde":0.1,"summary":"Slow, low and sustained, arms leading."}`;
+${Object.entries(INTENTIONS_SCHEMA.properties).map(([k, v]) => `- "${k}": ${v.description}${v.enum ? ` One of: ${v.enum.filter(Boolean).join(', ')}, or null.` : ''}${v.items?.enum ? ` Values from: ${v.items.enum.join(', ')}.` : ''}${v.items?.properties ? ` Each step has the keys ${Object.keys(v.items.properties).map((p) => `"${p}"`).join(', ')}.` : ''}`).join('\n')}
+Example: {"energy":0.2,"level":0.1,"size":null,"travel":null,"turn":null,"armsUp":null,"jump":0,"stillness":0.6,"focus":"arms","tags":[],"avoid":[],"tempo":0.8,"variety":0.5,"mirror":0.35,"retrograde":0.1,"steps":[],"summary":"Slow, low and sustained, arms leading."}
+Example with steps: {"energy":0.2,"level":null,"size":null,"travel":null,"turn":null,"armsUp":null,"jump":0,"stillness":null,"focus":null,"tags":["everyday"],"avoid":[],"tempo":1,"variety":0.5,"mirror":0.35,"retrograde":0.1,"steps":[{"action":"stand","seconds":4,"path":null,"radius":null,"distance":null,"direction":null,"laps":null},{"action":"walk","seconds":null,"path":"circle","radius":1.5,"distance":null,"direction":null,"laps":1}],"summary":"Stand calmly, then walk one circle."}`;
 
 export const messagesFor = (prompt, structured) => [
   { role: 'system', content: structured ? SYSTEM : `${SYSTEM}\n\n${JSON_INSTRUCTIONS}` },
@@ -116,7 +141,7 @@ export function sanitize(raw) {
   keep('variety', 0, 1);
   keep('mirror', 0, 1);
   keep('retrograde', 0, 1);
-  return { intentions: out, summary: typeof raw?.summary === 'string' ? raw.summary.slice(0, 240) : '' };
+  return { intentions: out, steps: sanitizeSteps(raw?.steps), summary: typeof raw?.summary === 'string' ? raw.summary.slice(0, 240) : '' };
 }
 
 // ---- HTTP providers -------------------------------------------------------------------------
@@ -342,7 +367,7 @@ export const localBrain = (id) => (local[id] ??= new LocalBrain(id));
 /**
  * Read a prompt as intentions with the chosen brain.
  * settings: { provider, baseUrl, model, apiKey }; onProgress: loading updates for a WebGPU brain.
- * @returns {Promise<{ intentions: object, summary: string, model: string }>}
+ * @returns {Promise<{ intentions: object, steps: object[], summary: string, model: string }>}
  */
 export async function intentionsFromBrain(prompt, settings, { onProgress = null } = {}) {
   const p = provider(settings.provider);
@@ -372,6 +397,6 @@ export async function intentionsFromBrain(prompt, settings, { onProgress = null 
       text = await postChat(p, s, messagesFor(prompt, false), false);
     }
   }
-  const { intentions, summary } = sanitize(extractJSON(text));
-  return { intentions, summary, model: used };
+  const { intentions, steps, summary } = sanitize(extractJSON(text));
+  return { intentions, steps, summary, model: used };
 }

@@ -29,6 +29,13 @@ replayed from its seed.
   machine), Ollama or LM Studio on your machine, or Claude, OpenAI,
   OpenRouter, Gemini, GitHub Models or any OpenAI-compatible API with your
   own key.
+- **Score**: a prompt that asks for actions ("stand in a neutral pose, then
+  walk in a circle", "walk 2 m forward, then dance for 5 seconds") is read as
+  steps: stand, walk a path (circle or line) or dance. The director borrows a
+  body pose from learned movement (a calm standing frame, one phase of a
+  walking gait), places it in space (on the path, facing along it) and
+  MotionBricks generates the motion between; clips are never mixed. Prompts
+  about qualities only stay free improvisation.
 - **Repertoire**: clips are split into movements at natural pauses and
   described (level, size, energy, travel, turning, jumps, which part leads).
 - **Improviser**: chooses by intention, continuity with the current pose and
@@ -83,6 +90,13 @@ options can be compared:
 `auto` (the default) uses FP16 on WebGPU and 8-bit on WebAssembly. The model
 runs in a Web Worker, so the page stays smooth while it generates. For the
 8-bit build locally: `python tools/build_int8.py --out models/int8`.
+
+The SOMA body figure needs its mesh, also built on deploy. Locally (needs
+`usd-core` and `numpy`, for example through uv):
+
+```bash
+uv run --no-project --python 3.12 --with usd-core --with numpy python tools/build_body.py --out models/body
+```
 
 ## Acknowledgements
 

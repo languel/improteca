@@ -12,7 +12,7 @@ import { NEUTRAL } from './improviser.js';
 const LEXICON = [
   // energy
   [/\b(calm|gentle|soft|quiet|tender|serene|peaceful|lazy|tired|sleepy|relaxed|light(?:ly)?|float(?:ing|y)?)\b/, 'energy', 0.1],
-  [/\b(energetic|vigorous|wild|explosive|powerful|strong|fierce|frantic|excited|angry|intense|sharp|punchy|dynamic)\b/, 'energy', 0.9],
+  [/\b(energetic(?:ally)?|vigorous(?:ly)?|wild(?:ly)?|explosive|powerful|strong|fierce|frantic|excited|angry|intense|sharp|punchy|dynamic)\b/, 'energy', 0.9],
   // level
   [/\b(low|floor|ground|crouch(?:ing)?|sink(?:ing)?|deep|grounded|earthy|kneel(?:ing)?)\b/, 'level', 0.05],
   [/\b(high|tall|lift(?:ed|ing)?|rise|rising|reach(?:ing)? up|upward|elevated|on (?:your |her |his |their )?toes|relev[eé])\b/, 'level', 0.95],
@@ -139,10 +139,17 @@ export function describeIntentions(I) {
     turn: ['no turns', 'turning'], armsUp: ['arms low', 'arms high'], jump: ['grounded', 'jumping'], stillness: ['flowing', 'with pauses'],
   };
   const out = [];
-  for (const [k, [lo, hi]] of Object.entries(words)) if (I[k] !== null && I[k] !== undefined) out.push(I[k] >= 0.5 ? hi : lo);
+  // A middling value (0.35 to 0.65) is no strong preference either way: no word for it.
+  for (const [k, [lo, hi]] of Object.entries(words)) {
+    const v = I[k];
+    if (v === null || v === undefined) continue;
+    if (v >= 0.65) out.push(hi);
+    else if (v <= 0.35) out.push(lo);
+  }
   if (I.focus) out.push(`led by ${({ handL: 'left hand', handR: 'right hand', footL: 'left foot', footR: 'right foot', head: 'head', arms: 'arms', legs: 'legs' })[I.focus]}`);
-  if (I.tags?.length) out.push(I.tags.join(' + '));
-  if (I.avoid?.length) out.push(`no ${I.avoid.join(', ')}`);
+  const tag = (t) => ({ dance: 'contemporary', film: 'film material' })[t] || t;
+  if (I.tags?.length) out.push(I.tags.map(tag).join(' + '));
+  for (const t of I.avoid || []) out.push(`no ${tag(t)}`);
   if (I.tempo && Math.abs(I.tempo - 1) > 0.05) out.push(I.tempo > 1 ? 'faster' : 'slower');
   if (I.variety <= 0.2) out.push('repetitive');
   if (I.variety >= 0.8) out.push('unpredictable');
